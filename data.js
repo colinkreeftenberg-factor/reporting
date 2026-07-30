@@ -45,14 +45,11 @@ const TARGETS = {
   'Food Safety':              { EU: 0.50, NL: 0.20, BE: 0.20, SE: 0.20, DK: 0.20, DE: 1.00 },
 };
 
-// GrowthModel column -> FA market code
-const GROWTHMODEL_COLS = {
-  'NL BOXES': 'FA-NL',
-  'BE BOXES': 'FA-BE',
-  'DK BOXES': 'FA-DK',
-  'SE BOXES': 'FA-SE',
-  'DE BOXES': 'FA-DE',
-};
+// GrowthModel market codes we need to resolve to actual column headers at
+// parse time (see _processGrowthModel) — done flexibly rather than by exact
+// header string, since small naming differences (casing, "FC-" prefix, etc.)
+// would otherwise silently zero out a market's box count.
+const GROWTHMODEL_MARKET_CODES = { 'FA-NL': 'nl', 'FA-BE': 'be', 'FA-SE': 'se', 'FA-DK': 'dk', 'FA-DE': 'de' };
 
 // ---- Utilities -------------------------------------------------------------
 
@@ -84,10 +81,13 @@ function weekSortKey(w) {
 
 function isAgentRow(row) {
   // Agent/Cert = everything where override_reason isn't the bulk-import marker.
-  // Matched case-insensitively and by substring, since real sheet values can
-  // vary slightly in casing/whitespace around the exact marker text.
+  // Also checked against the 'agent' column itself (values like "bulk/CERT"
+  // vs "agent" in the source data), since override_reason isn't always
+  // populated consistently for bulk-imported rows.
   const reason = (row.override_reason || '').trim().toLowerCase();
-  return !reason.includes('bulk import');
+  const agentField = (row.agent || '').trim().toLowerCase();
+  const isBulk = reason.includes('bulk import') || agentField.includes('bulk');
+  return !isBulk;
 }
 
 // ---- Store ------------------------------------------------------------------
@@ -167,16 +167,36 @@ const DataStore = {
   },
 
   _processGrowthModel(parsed) {
+    const rows = parsed.data;
     const gm = {};
-    parsed.data.forEach(r => {
-      const week = normalizeWeek(r.WEEK || r.Week || r.week);
+    if (!rows.length) { this.growthModel = gm; this.growthModelColumnMap = null; return; }
+
+    const headerKeys = Object.keys(rows[0]);
+    const normalize = (k) => k.toLowerCase().replace(/[^a-z]/g, '');
+    const weekKey = headerKeys.find(k => /week/i.test(k)) || headerKeys[0];
+
+    // Resolve each market's real column name by looking for its 2-letter
+    // code anywhere in the normalized header (matches "NL BOXES", "NL Boxes",
+    // "FC-NL", "FC-NL Boxes", etc. without needing an exact string match).
+    const resolvedCols = {};
+    Object.entries(GROWTHMODEL_MARKET_CODES).forEach(([faCode, code2]) => {
+      resolvedCols[faCode] = headerKeys.find(k => k !== weekKey && normalize(k).includes(code2)) || null;
+    });
+    const totalKey = headerKeys.find(k => /total|^fa-?eu$|\beu\b/i.test(k)) || null;
+
+    this.growthModelColumnMap = { weekKey, resolvedCols, totalKey };
+
+    rows.forEach(r => {
+      const week = normalizeWeek(r[weekKey]);
       if (!week) return;
-      const entry = { 'FA-EU': 0 };
-      Object.entries(GROWTHMODEL_COLS).forEach(([col, market]) => {
-        const val = toNumber(r[col]);
-        entry[market] = val;
-        entry['FA-EU'] += val;
+      const entry = {};
+      let sum = 0;
+      Object.entries(resolvedCols).forEach(([faCode, colName]) => {
+        const val = colName ? toNumber(r[colName]) : 0;
+        entry[faCode] = val;
+        sum += val;
       });
+      entry['FA-EU'] = totalKey ? toNumber(r[totalKey]) : sum;
       gm[week] = entry;
     });
     this.growthModel = gm;
@@ -281,9 +301,22 @@ function orderGroupsByImpact(matrix, weeks) {
     return totalB - totalA;
   });
 }
+
+// Team-specific ordering: all "Production - X" teams stay grouped together
+// (sorted by impact within that group), followed by every other team (also
+// sorted by impact). Used anywhere teams are listed/stacked/rowed.
+function orderTeamsGrouped(matrix, weeks) {
+  const impactOf = (k) => weeks.reduce((s, w) => s + (matrix[k][w] ? matrix[k][w].errorCount : 0), 0);
+  const keys = Object.keys(matrix);
+  const production = keys.filter(k => k.startsWith('Production -')).sort((a, b) => impactOf(b) - impactOf(a));
+  const others = keys.filter(k => !k.startsWith('Production -')).sort((a, b) => impactOf(b) - impactOf(a));
+  return [...production, ...others];
+}
 // each market's box volume over the selected weeks. Multiple teams are
 // summed, since each team's target represents an independent error budget
-// against the same box denominator.
+// against the same box denominator. Returns null (not 0) if none of the
+// given teams have a defined target — 0 would wrongly flag any error as
+// "over target".
 function blendedTarget(teams, markets, weeks) {
   const teamList = teams && teams.length ? teams : OPERATIONAL_TEAMS;
   const marketList = markets && markets.length ? markets : ALL_MARKETS;
@@ -291,12 +324,14 @@ function blendedTarget(teams, markets, weeks) {
 
   const marketWeights = marketList.map(m => ({ m, boxes: DataStore.boxCount([m], weekList) }));
   const totalBoxes = marketWeights.reduce((s, x) => s + x.boxes, 0);
-  if (totalBoxes === 0) return 0;
+  if (totalBoxes === 0) return null;
 
   let blended = 0;
+  let anyTeamHasTarget = false;
   teamList.forEach(team => {
     const t = TARGETS[team];
     if (!t) return;
+    anyTeamHasTarget = true;
     let teamBlend = 0;
     marketWeights.forEach(({ m, boxes }) => {
       const key = m.replace('FA-', '');
@@ -304,5 +339,12 @@ function blendedTarget(teams, markets, weeks) {
     });
     blended += teamBlend;
   });
-  return blended;
+  return anyTeamHasTarget ? blended : null;
+}
+
+// Target for exactly ONE team — this is what each row in a per-team
+// breakdown table must be compared against, never the combined/summed
+// target of every team stacked together.
+function teamTarget(team, markets, weeks) {
+  return blendedTarget([team], markets, weeks);
 }

@@ -112,7 +112,7 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     container.appendChild(kpiRowFor(agg));
 
     const matrix = buildWeekGroupMatrix(filtered, groupField, weeks, markets);
-    const groupKeys = orderGroupsByImpact(matrix, weeks);
+    const groupKeys = level === 'team' ? orderTeamsGrouped(matrix, weeks) : orderGroupsByImpact(matrix, weeks);
     const canDrillFurther = DRILL_CHAIN.indexOf(level) < DRILL_CHAIN.length - 1;
 
     if (!groupKeys.length || !weeks.length) {
@@ -120,30 +120,39 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
       return;
     }
 
+    // Each row needs ITS OWN target, not the combined target of every team
+    // stacked together — a Warehousing row must be checked against
+    // Warehousing's 0.50%, not against all-teams-summed ~5%.
+    const rowTargets = {};
+    groupKeys.forEach(k => { rowTargets[k] = level === 'team' ? teamTarget(k, markets, weeks) : target; });
+
     // ---- Chart 1: stacked weekly Error % by group, with legend + total label ----
     const groupErrorPctByWeek = {};
     groupKeys.forEach(k => { groupErrorPctByWeek[k] = {}; weeks.forEach(w => { groupErrorPctByWeek[k][w] = matrix[k][w].errorPct; }); });
 
     const chartCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly Error % by ${levelLabel}`]), el('div', { class: 'card-desc' }, ['Stacked by ' + levelLabel.toLowerCase() + ' · shaded band = blended target · total % labeled above each bar'])]),
+        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly Error % by ${levelLabel}`]), el('div', { class: 'card-desc' }, ['Stacked by ' + levelLabel.toLowerCase() + ' · shaded band = combined target across the stack · total % labeled above each bar'])]),
       ]),
       el('div', { class: 'chart-wrap' }, [el('canvas')]),
     ]);
     container.appendChild(chartCard);
     renderStackedWeeklyChart(chartCard.querySelector('canvas'), weeks, groupKeys, groupErrorPctByWeek, target);
 
-    // ---- Table 1: Error % per week per group (breakdown), colored vs target ----
+    // ---- Table 1: Error % per week per group (breakdown), colored vs EACH ROW'S OWN target ----
     const breakdownCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, [`Breakdown by ${levelLabel} — Error % per Week`]), el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in · red = above target' : 'Red = above target'])]),
+        el('div', {}, [el('div', { class: 'card-title' }, [`Breakdown by ${levelLabel} — Error % per Week`]), el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in · red = above that row\'s own target' : 'Red = above target'])]),
       ]),
     ]);
     breakdownCard.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
       rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = matrix[k][w].errorPct; return acc; }, {}) })),
-      cellFormatter: (v) => ({ display: fmtPct(v), cls: v > target ? 'cell-pct-bad' : 'cell-pct-good' }),
+      cellFormatter: (v, w, rowKey) => {
+        const rt = rowTargets[rowKey];
+        return { display: fmtPct(v), cls: (rt === null || rt === undefined) ? '' : (v > rt ? 'cell-pct-bad' : 'cell-pct-good') };
+      },
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
     }));
     container.appendChild(breakdownCard);
@@ -218,11 +227,23 @@ function PageRecipe(container, fs) {
     const agg = aggregate(filtered, weeks, markets);
     container.appendChild(kpiRowFor(agg));
 
-    const teams = uniqueSorted(filtered, 'team');
-    if (!teams.length) {
+    const teamStats = uniqueSorted(filtered, 'team').map(team => {
+      const teamRows = filtered.filter(r => r.team === team);
+      return { team, errorCount: teamRows.length, compensationTotal: teamRows.reduce((s, r) => s + r.compensation, 0) };
+    });
+    if (!teamStats.length) {
       container.appendChild(el('div', { class: 'card' }, [el('div', { class: 'empty-state' }, [el('div', { class: 'icon' }, ['—']), 'No recipe-related errors match the current filters.'])]));
       return;
     }
+    // Group Production - X teams together, each bucket ordered by impact (compensation).
+    const production = teamStats.filter(t => t.team.startsWith('Production -')).sort((a, b) => b.compensationTotal - a.compensationTotal);
+    const others = teamStats.filter(t => !t.team.startsWith('Production -')).sort((a, b) => b.compensationTotal - a.compensationTotal);
+    const orderedTeamStats = [...production, ...others];
+    const teams = orderedTeamStats.map(t => t.team);
+
+    container.appendChild(el('div', { class: 'kpi-row' }, orderedTeamStats.map(t =>
+      KpiCard({ label: t.team, value: fmtInt(t.errorCount) + ' errors', sub: fmtEur(t.compensationTotal) + ' compensation' })
+    )));
 
     teams.forEach(team => {
       const teamRows = filtered.filter(r => r.team === team);
@@ -282,6 +303,18 @@ function PageDataCheck(container, fs) {
       container.appendChild(el('div', { class: 'error-banner' }, [
         el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['Duplicate rows found and removed']),
         `${DataStore.rawRowCountBeforeDedup.toLocaleString()} rows came back from the EU sheet; ${DataStore.duplicatesRemoved.toLocaleString()} were exact duplicates (same box, timestamp, category, subcategory, complaint, and compensation amount) and have been excluded from every calculation on this dashboard. If a specific week's Error % still looks wrong after this, the duplicates likely aren't byte-for-byte identical (e.g. re-logged with a slightly different timestamp) — let me know which week and I can loosen the matching.`,
+      ]));
+    }
+
+    if (DataStore.growthModelColumnMap) {
+      const { weekKey, resolvedCols, totalKey } = DataStore.growthModelColumnMap;
+      const missing = Object.entries(resolvedCols).filter(([, v]) => !v).map(([k]) => k);
+      container.appendChild(el('div', { class: missing.length ? 'error-banner' : 'config-banner' }, [
+        el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['GrowthModel column mapping']),
+        `Week column read from "${weekKey}". `,
+        Object.entries(resolvedCols).map(([fa, col]) => `${fa} ← ${col || 'NOT FOUND'}`).join('  ·  '),
+        `  ·  Total ← ${totalKey || '(summed from the 5 market columns above)'}`,
+        missing.length ? ` — ${missing.join(', ')} could not be matched to any column, so that market's box count is reading as 0. Check the exact header spelling in GrowthModel.` : '',
       ]));
     }
 

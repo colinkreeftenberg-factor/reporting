@@ -22,10 +22,26 @@ function el(tag, attrs = {}, children = []) {
 const fmtInt = n => Math.round(n).toLocaleString('en-GB');
 const fmtEur = n => '€' + n.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtEurPrecise = n => '€' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtPct = n => {
-  const decimals = Math.abs(n) < 0.01 ? 4 : Math.abs(n) < 1 ? 3 : 2;
-  return n.toLocaleString('en-GB', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) + '%';
-};
+// Team/group color palette — deliberately excludes Carbon/black (reserved
+// for UI chrome, not data series) and generates lightened tints of the same
+// hues if there are more groups than base colors, rather than ever repeating
+// a color outright.
+const GROUP_COLOR_BASE = ['#18849F', '#FF585D', '#75C26D', '#C79C00', '#9B2629', '#61DFFF', '#206B19', '#6B6A63', '#8B5CF6', '#E8590C'];
+
+function lightenHex(hex, amount) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const mix = (c) => Math.round(c + (255 - c) * amount);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+
+function colorForIndex(i) {
+  const pass = Math.floor(i / GROUP_COLOR_BASE.length);
+  const base = GROUP_COLOR_BASE[i % GROUP_COLOR_BASE.length];
+  return pass === 0 ? base : lightenHex(base, Math.min(0.55, pass * 0.28));
+}
+
+const fmtPct = n => n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
 
 // ---- KPI card ---------------------------------------------------------------
 
@@ -259,7 +275,7 @@ function renderBarChart(canvas, labels, values, opts = {}) {
     if (v > cap) { clippedIndices.add(i); return cap; }
     return v;
   });
-  const palette = ['#141414', '#18849F', '#C79C00', '#75C26D', '#FF585D', '#61DFFF', '#206B19', '#9B2629'];
+  const backgroundColor = labels.map((_, i) => colorForIndex(i));
 
   const chart = new Chart(canvas, {
     type: 'bar',
@@ -267,7 +283,7 @@ function renderBarChart(canvas, labels, values, opts = {}) {
       labels,
       datasets: [{
         data: displayValues,
-        backgroundColor: labels.map((_, i) => palette[i % palette.length]),
+        backgroundColor,
         borderRadius: 8,
         maxBarThickness: 46,
       }],
@@ -450,11 +466,10 @@ const totalLabelPlugin = {
 
 // groupErrorPctByWeek: { group: { week: errorPct } }, groups already ordered
 function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, targetPct) {
-  const palette = ['#141414', '#18849F', '#C79C00', '#75C26D', '#FF585D', '#61DFFF', '#206B19', '#9B2629', '#6B6A63'];
   const datasets = groups.map((g, i) => ({
     label: g,
     data: weeks.map(w => groupErrorPctByWeek[g][w] || 0),
-    backgroundColor: palette[i % palette.length],
+    backgroundColor: colorForIndex(i),
     stack: 'errors',
     borderRadius: 4,
     maxBarThickness: 64,
@@ -512,7 +527,7 @@ function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick }) {
     tr.appendChild(el('td', {}, [row.key]));
     weeks.forEach(w => {
       const val = row.cells[w];
-      const { display, cls } = cellFormatter(val, w);
+      const { display, cls } = cellFormatter(val, w, row.key);
       tr.appendChild(el('td', { class: 'cell-num ' + (cls || '') }, [display]));
     });
     tbody.appendChild(tr);
