@@ -70,6 +70,7 @@ class FilterState {
     return this.state.weeks.length ? this.state.weeks : DataStore.weeks;
   }
   effectiveMarkets() {
-    return this.state.markets.length ? this.state.markets : ALL_MARKETS;
+    if (!this.state.markets.length || this.state.markets.includes('FA-EU')) return ALL_MARKETS;
+    return this.state.markets;
   }
 }

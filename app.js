@@ -71,6 +71,18 @@ function showLoadErrorBanner(message) {
 
 async function init() {
   renderNav();
+
+  if (typeof Chart === 'undefined' || typeof Papa === 'undefined') {
+    document.getElementById('loadingOverlay').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    setPageHeader('Library failed to load', 'Chart.js or PapaParse did not load from the CDN');
+    document.getElementById('pageContent').appendChild(el('div', { class: 'error-banner' }, [
+      el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['Missing dependency']),
+      `${typeof Chart === 'undefined' ? 'Chart.js' : 'PapaParse'} did not load. Check your internet connection, or that the <script> tags at the top of index.html haven't been blocked/modified, then refresh.`,
+    ]));
+    return;
+  }
+
   await DataStore.load();
 
   document.getElementById('loadingOverlay').style.display = 'none';

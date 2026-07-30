@@ -22,7 +22,10 @@ function el(tag, attrs = {}, children = []) {
 const fmtInt = n => Math.round(n).toLocaleString('en-GB');
 const fmtEur = n => '€' + n.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtEurPrecise = n => '€' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtPct = n => n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+const fmtPct = n => {
+  const decimals = Math.abs(n) < 0.01 ? 4 : Math.abs(n) < 1 ? 3 : 2;
+  return n.toLocaleString('en-GB', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) + '%';
+};
 
 // ---- KPI card ---------------------------------------------------------------
 
@@ -75,7 +78,25 @@ function FilterBar(fs, spec, onAnyChange) {
     f.options.forEach(opt => {
       const checked = selected.includes(opt.value);
       const row = el('label', { class: 'filter-option' }, [
-        el('input', { type: 'checkbox', ...(checked ? { checked: 'checked' } : {}), onchange: () => { fs.toggleInArray(f.key, opt.value); onAnyChange(); } }),
+        el('input', {
+          type: 'checkbox', ...(checked ? { checked: 'checked' } : {}),
+          onchange: () => {
+            if (f.exclusiveValue) {
+              const arr = fs.state[f.key];
+              if (opt.value === f.exclusiveValue) {
+                fs.state[f.key] = arr.includes(f.exclusiveValue) ? [] : [f.exclusiveValue];
+              } else {
+                const next = arr.filter(v => v !== f.exclusiveValue);
+                const idx = next.indexOf(opt.value);
+                if (idx >= 0) next.splice(idx, 1); else next.push(opt.value);
+                fs.state[f.key] = next;
+              }
+              onAnyChange();
+            } else {
+              fs.toggleInArray(f.key, opt.value); onAnyChange();
+            }
+          },
+        }),
         el('span', {}, [opt.label]),
       ]);
       panel.appendChild(row);
@@ -333,6 +354,8 @@ function DataTable({ columns, rows, onRowClick, targetPct }) {
           display = fmtPct(display);
         } else if (col.money && typeof display === 'number') {
           display = fmtEur(display);
+        } else if (col.moneyPrecise && typeof display === 'number') {
+          display = fmtEurPrecise(display);
         } else if (col.int && typeof display === 'number') {
           display = fmtInt(display);
         }

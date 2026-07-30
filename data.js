@@ -18,6 +18,9 @@ const FA_TO_FC = {
   'FA-DE': 'FC-DE',
 };
 const ALL_MARKETS = ['FA-NL', 'FA-BE', 'FA-SE', 'FA-DK', 'FA-DE'];
+// UI-facing list: FA-EU is a selectable "all markets combined" option, mutually
+// exclusive with picking individual markets (handled in the FilterBar component).
+const MARKET_FILTER_OPTIONS = ['FA-EU', 'FA-NL', 'FA-BE', 'FA-SE', 'FA-DK', 'FA-DE'];
 
 // Operational teams = the teams that have a defined target (used to scope
 // Page 1 "General Operational Error Rates" vs Page 3 "All Errors").
@@ -194,7 +197,7 @@ function fetchCsv(url) {
 function filterRows(rows, f) {
   return rows.filter(r => {
     if (f.weeks && f.weeks.length && !f.weeks.includes(r.week)) return false;
-    if (f.markets && f.markets.length) {
+    if (f.markets && f.markets.length && !f.markets.includes('FA-EU')) {
       const fcList = f.markets.map(m => FA_TO_FC[m]);
       if (!fcList.includes(r.country)) return false;
     }

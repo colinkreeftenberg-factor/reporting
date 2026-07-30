@@ -14,7 +14,7 @@ function optionsFor(list) { return list.map(v => ({ value: v, label: v })); }
 function standardFilterSpec(fs, rows, { includeTeamFilter = true, teamScope = null } = {}) {
   const spec = [
     { key: 'weeks', label: 'Week', type: 'multiselect', options: optionsFor(DataStore.weeks) },
-    { key: 'markets', label: 'Country', type: 'multiselect', options: optionsFor(ALL_MARKETS) },
+    { key: 'markets', label: 'Country', type: 'multiselect', exclusiveValue: 'FA-EU', options: optionsFor(MARKET_FILTER_OPTIONS) },
   ];
   if (includeTeamFilter) {
     const teamOptions = teamScope ? teamScope : uniqueSorted(rows, 'team');
@@ -168,6 +168,23 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
 
     container.appendChild(gridWrap);
 
+    const compTableCard = el('div', { class: 'card' }, [
+      el('div', { class: 'card-header' }, [
+        el('div', {}, [el('div', { class: 'card-title' }, ['Compensation Table']), el('div', { class: 'card-desc' }, [`Sorted by ${compensationMode === 'total' ? 'total compensation' : 'compensation per box'}`])]),
+      ]),
+    ]);
+    const compSorted = [...breakdown].sort((a, b) => compensationMode === 'total' ? b.compensationTotal - a.compensationTotal : b.compPerBox - a.compPerBox);
+    compTableCard.appendChild(DataTable({
+      columns: [
+        { key: 'key', label: levelLabel },
+        { key: 'errorCount', label: 'Errors', numeric: true, int: true },
+        { key: 'compensationTotal', label: 'Total Compensation', numeric: true, money: true },
+        { key: 'compPerBox', label: 'Comp / Box', numeric: true, moneyPrecise: true },
+      ],
+      rows: compSorted,
+    }));
+    container.appendChild(compTableCard);
+
     const tableCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, [`Breakdown by ${levelLabel}`]), el('div', { class: 'card-desc' }, ['Click a row to drill in · red = above target'])]),
     ]);
@@ -221,7 +238,7 @@ function PageRecipe(container, fs) {
 
     const spec = [
       { key: 'weeks', label: 'Week', type: 'multiselect', options: optionsFor(DataStore.weeks) },
-      { key: 'markets', label: 'Country', type: 'multiselect', options: optionsFor(ALL_MARKETS) },
+      { key: 'markets', label: 'Country', type: 'multiselect', exclusiveValue: 'FA-EU', options: optionsFor(MARKET_FILTER_OPTIONS) },
       { key: 'recipe', label: 'Recipe', type: 'multiselect', options: optionsFor(uniqueSorted(recipeRows, 'recipe_title')) },
     ];
     container.appendChild(FilterBar(fs, spec, render));
@@ -252,7 +269,7 @@ function PageRecipe(container, fs) {
         const g = map.get(key); g.errorCount++; g.compensationTotal += r.compensationTotal;
       });
       const grouped = Array.from(map.values()).map(g => ({ ...g, errorPct: agg.boxes > 0 ? (g.errorCount / agg.boxes) * 100 : 0 }))
-        .sort((a, b) => b.errorCount - a.errorCount);
+        .sort((a, b) => b.compensationTotal - a.compensationTotal);
 
       const card = el('div', { class: 'card' }, [
         el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, [team]), el('div', { class: 'card-desc' }, [`${grouped.length} recipe/complaint combinations`])]),
@@ -285,7 +302,7 @@ function PageCategoryDrill(container, fs) {
 
     const spec = [
       { key: 'weeks', label: 'Week', type: 'multiselect', options: optionsFor(DataStore.weeks) },
-      { key: 'markets', label: 'Country', type: 'multiselect', options: optionsFor(ALL_MARKETS) },
+      { key: 'markets', label: 'Country', type: 'multiselect', exclusiveValue: 'FA-EU', options: optionsFor(MARKET_FILTER_OPTIONS) },
       { key: 'teams', label: 'Team', type: 'multiselect', options: optionsFor(uniqueSorted(allRows, 'team')) },
       { key: 'errorCategory', label: 'Error Category', type: 'multiselect', options: optionsFor(uniqueSorted(allRows, 'error_category')) },
     ];

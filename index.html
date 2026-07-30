@@ -6,8 +6,8 @@
 <title>Factor EU · Operational Error Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <style>
 /* ============================================================
    FACTOR EU OPERATIONAL ERROR DASHBOARD
@@ -302,8 +302,8 @@ table.data-table tbody tr{cursor:pointer; transition:background .12s ease;}
 table.data-table tbody tr:hover{background:var(--surface-sunken);}
 table.data-table tbody tr:nth-child(even){background:rgba(20,20,20,0.012);}
 .cell-num{text-align:right; font-variant-numeric:tabular-nums;}
-.cell-pct-bad{color:var(--cherry); font-weight:700;}
-.cell-pct-good{color:var(--basil); font-weight:700;}
+.cell-pct-bad{color:var(--cherry); font-weight:700; background:rgba(255,88,93,0.10); border-radius:8px;}
+.cell-pct-good{color:var(--basil); font-weight:700; background:rgba(117,194,109,0.12); border-radius:8px;}
 .row-flag{width:6px; height:6px; border-radius:50%; display:inline-block; margin-right:8px;}
 
 /* ---------- Loading / empty states ---------- */
