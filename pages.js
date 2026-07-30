@@ -83,12 +83,14 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
   let compensationMode = 'total'; // 'total' | 'perbox'
   let breakdownMode = 'pct'; // 'pct' | 'absolute'
 
-  function render() {
+  function render() { preserveScroll(renderInner); }
+
+  function renderInner() {
     container.innerHTML = '';
     setPageHeader(title, subtitle);
 
     container.appendChild(Breadcrumb(title, fs, render));
-    container.appendChild(WeekSlider(fs, render));
+    container.appendChild(WeekRangePicker(fs, render));
     container.appendChild(MarketPillRow(fs, render));
 
     const spec = standardFilterSpec(fs, scopedRows, { includeTeamFilter: !fs.drillPath.length, teamScope });
@@ -243,11 +245,13 @@ function PageRecipe(container, fs) {
     r.error_subcategory.includes('_recipes') || r.error_subcategory.includes('_ingredients')
   );
 
-  function render() {
+  function render() { preserveScroll(renderInner); }
+
+  function renderInner() {
     container.innerHTML = '';
     setPageHeader('Recipe Deep Dive', 'Which recipes create the biggest operational impact');
 
-    container.appendChild(WeekSlider(fs, render));
+    container.appendChild(WeekRangePicker(fs, render));
     container.appendChild(MarketPillRow(fs, render));
 
     const spec = [
@@ -330,7 +334,9 @@ function PageRecipe(container, fs) {
 // visible instead of hiding inside a % calculation.
 
 function PageDataCheck(container, fs) {
-  function render() {
+  function render() { preserveScroll(renderInner); }
+
+  function renderInner() {
     container.innerHTML = '';
     setPageHeader('Data Check', 'Raw box counts and error counts per week — for spotting bad denominators');
 
@@ -419,11 +425,13 @@ function PageCategoryDrill(container, fs) {
   const allRows = DataStore.rawRows;
   let breakdownMode = 'pct'; // 'pct' | 'absolute'
 
-  function render() {
+  function render() { preserveScroll(renderInner); }
+
+  function renderInner() {
     container.innerHTML = '';
     setPageHeader('Error Category Drill Down', 'Group by subcategory, complaint, and mapped detail within a category');
 
-    container.appendChild(WeekSlider(fs, render));
+    container.appendChild(WeekRangePicker(fs, render));
     container.appendChild(MarketPillRow(fs, render));
 
     const spec = [

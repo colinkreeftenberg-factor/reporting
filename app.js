@@ -39,6 +39,7 @@ function renderActivePage() {
   if (!pageFilterStates[page.id]) {
     pageFilterStates[page.id] = new FilterState({}, () => {});
   }
+  window.scrollTo(0, 0);
   page.render(container, pageFilterStates[page.id]);
 }
 
@@ -118,6 +119,7 @@ document.getElementById('menuBtn')?.addEventListener('click', () => {
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.filter-group')) {
     document.querySelectorAll('.filter-panel.open').forEach(p => p.classList.remove('open'));
+    Object.values(pageFilterStates).forEach(fs => { fs.openFilterKey = null; });
   }
 });
 

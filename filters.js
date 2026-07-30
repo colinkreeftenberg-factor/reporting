@@ -18,6 +18,7 @@ class FilterState {
     }, defaults || {});
     this.onChange = onChange || (() => {});
     this.drillPath = []; // breadcrumb stack for drill-through, e.g. [{level:'team', value:'Packaging'}, ...]
+    this.openFilterKey = null; // which dropdown filter panel (if any) is currently open
   }
 
   set(key, value) {

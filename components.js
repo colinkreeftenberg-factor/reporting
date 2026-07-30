@@ -4,6 +4,17 @@
    should build a KPI card / filter / table / chart from scratch.
    ============================================================ */
 
+// ---- Scroll preservation ------------------------------------------------------
+
+// Clearing/rebuilding a page's content (as every filter/toggle interaction does)
+// temporarily collapses its height, which makes the browser clamp scroll
+// position back to 0 before the content grows back. This restores it.
+function preserveScroll(renderFn) {
+  const y = window.scrollY;
+  renderFn();
+  window.scrollTo(0, y);
+}
+
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
   Object.entries(attrs).forEach(([k, v]) => {
@@ -90,16 +101,17 @@ function FilterBar(fs, spec, onAnyChange) {
 
     const group = el('div', { class: 'filter-group' });
     const selected = fs.state[f.key] || [];
+    const isOpen = fs.openFilterKey === f.key;
     const btn = el('button', {
       class: 'filter-btn' + (selected.length ? ' active' : ''),
       onclick: (e) => {
         e.stopPropagation();
-        document.querySelectorAll('.filter-panel.open').forEach(p => { if (p !== panel) p.classList.remove('open'); });
-        panel.classList.toggle('open');
+        fs.openFilterKey = isOpen ? null : f.key;
+        onAnyChange();
       },
     }, [f.label, selected.length ? el('span', { class: 'count' }, [String(selected.length)]) : null]);
 
-    const panel = el('div', { class: 'filter-panel' });
+    const panel = el('div', { class: 'filter-panel' + (isOpen ? ' open' : '') });
     const clearBtn = el('button', { class: 'filter-clear', onclick: () => { fs.clear(f.key); onAnyChange(); } }, ['Clear']);
     panel.appendChild(clearBtn);
     f.options.forEach(opt => {
@@ -337,89 +349,44 @@ function weeksToRange(selectedWeeks, allWeeks) {
   return [Math.min(...idxs), Math.max(...idxs)];
 }
 
-function WeekSlider(fs, onAnyChange) {
+function WeekRangePicker(fs, onAnyChange) {
   const weeks = DataStore.weeks;
   const n = weeks.length;
   let [startIdx, endIdx] = weeksToRange(fs.state.weeks, weeks);
 
-  const wrap = el('div', { class: 'week-slider' });
-  const labelEl = el('div', { class: 'week-slider-label' });
-  const track = el('div', { class: 'week-slider-track' });
-  const rangeFill = el('div', { class: 'week-slider-range' });
-  const handleStart = el('div', { class: 'week-slider-handle', tabindex: '0' });
-  const handleEnd = el('div', { class: 'week-slider-handle', tabindex: '0' });
-  track.appendChild(rangeFill);
-  track.appendChild(handleStart);
-  track.appendChild(handleEnd);
+  const wrap = el('div', { class: 'week-range-picker' });
 
-  function pct(i) { return n > 1 ? (i / (n - 1)) * 100 : 0; }
-
-  function paint() {
-    labelEl.textContent = n === 0 ? 'No weeks available' : startIdx === endIdx ? weeks[startIdx] : `${weeks[startIdx]} → ${weeks[endIdx]}`;
-    handleStart.style.left = pct(startIdx) + '%';
-    handleEnd.style.left = pct(endIdx) + '%';
-    rangeFill.style.left = pct(startIdx) + '%';
-    rangeFill.style.width = (pct(endIdx) - pct(startIdx)) + '%';
-  }
-  paint();
+  const fromSelect = el('select', { class: 'week-select' });
+  const toSelect = el('select', { class: 'week-select' });
+  weeks.forEach((w, i) => {
+    fromSelect.appendChild(el('option', { value: String(i) }, [w]));
+    toSelect.appendChild(el('option', { value: String(i) }, [w]));
+  });
+  fromSelect.value = String(startIdx);
+  toSelect.value = String(endIdx);
 
   function commit() {
-    fs.state.weeks = (startIdx === 0 && endIdx === n - 1) ? [] : weeks.slice(startIdx, endIdx + 1);
+    let s = parseInt(fromSelect.value, 10);
+    let e = parseInt(toSelect.value, 10);
+    if (s > e) { const tmp = s; s = e; e = tmp; } // auto-correct if From/To end up swapped
+    fs.state.weeks = (s === 0 && e === n - 1) ? [] : weeks.slice(s, e + 1);
     onAnyChange();
   }
+  fromSelect.addEventListener('change', commit);
+  toSelect.addEventListener('change', commit);
 
-  function dragHandle(handle, isStart) {
-    const onDown = (e) => {
-      e.preventDefault();
-      const rect = track.getBoundingClientRect();
-      const onMove = (ev) => {
-        const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
-        const x = Math.min(Math.max(clientX - rect.left, 0), rect.width);
-        const ratio = rect.width ? x / rect.width : 0;
-        let idx = Math.round(ratio * (n - 1));
-        if (isStart) { idx = Math.min(idx, endIdx); startIdx = idx; }
-        else { idx = Math.max(idx, startIdx); endIdx = idx; }
-        paint();
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        document.removeEventListener('touchmove', onMove);
-        document.removeEventListener('touchend', onUp);
-        commit();
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-      document.addEventListener('touchmove', onMove);
-      document.addEventListener('touchend', onUp);
-    };
-    handle.addEventListener('mousedown', onDown);
-    handle.addEventListener('touchstart', onDown);
-  }
-  dragHandle(handleStart, true);
-  dragHandle(handleEnd, false);
-
-  track.addEventListener('click', (e) => {
-    if (e.target === handleStart || e.target === handleEnd) return;
-    const rect = track.getBoundingClientRect();
-    const ratio = rect.width ? (e.clientX - rect.left) / rect.width : 0;
-    const idx = Math.round(ratio * (n - 1));
-    if (Math.abs(idx - startIdx) <= Math.abs(idx - endIdx)) startIdx = Math.min(idx, endIdx); else endIdx = Math.max(idx, startIdx);
-    paint();
-    commit();
-  });
-
-  const quick = el('div', { class: 'week-slider-quick' }, [
-    el('button', { onclick: () => { startIdx = 0; endIdx = n - 1; paint(); commit(); } }, ['All weeks']),
-    el('button', { onclick: () => { startIdx = n - 1; endIdx = n - 1; paint(); commit(); } }, ['Latest week only']),
+  const quick = el('div', { class: 'week-range-quick' }, [
+    el('button', { onclick: () => { fromSelect.value = '0'; toSelect.value = String(n - 1); commit(); } }, ['All weeks']),
+    el('button', { onclick: () => { fromSelect.value = String(n - 1); toSelect.value = String(n - 1); commit(); } }, ['Latest week only']),
   ]);
 
-  wrap.appendChild(el('div', { class: 'week-slider-top' }, [
-    el('span', { class: 'week-slider-title' }, ['Week']),
-    labelEl,
+  wrap.appendChild(el('div', { class: 'week-range-row' }, [
+    el('span', { class: 'week-range-title' }, ['Week']),
+    fromSelect,
+    el('span', { class: 'week-range-arrow' }, ['→']),
+    toSelect,
+    quick,
   ]));
-  wrap.appendChild(track);
-  wrap.appendChild(quick);
   return wrap;
 }
 
