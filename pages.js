@@ -81,6 +81,7 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
   const scopedRows = teamScope ? allRows.filter(r => teamScope.includes(r.team)) : allRows;
 
   let compensationMode = 'total'; // 'total' | 'perbox'
+  let breakdownMode = 'pct'; // 'pct' | 'absolute'
 
   function render() {
     container.innerHTML = '';
@@ -164,17 +165,25 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     container.appendChild(chartCard);
     renderStackedWeeklyChart(chartCard.querySelector('canvas'), weeks, groupKeys, groupErrorPctByWeek, target, { remainderByWeek, fixedMax });
 
-    // ---- Table 1: Error % per week per group (breakdown), colored vs EACH ROW'S OWN target ----
+    // ---- Table 1: per week per group (breakdown), colored vs EACH ROW'S OWN target in % mode ----
     const breakdownCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, [`Breakdown by ${levelLabel} — Error % per Week`]), el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in · red = above that row\'s own target' : 'Red = above target'])]),
+        el('div', {}, [
+          el('div', { class: 'card-title' }, [`Breakdown by ${levelLabel} — ${breakdownMode === 'pct' ? 'Error % per Week' : 'Absolute Errors per Week'}`]),
+          el('div', { class: 'card-desc' }, [breakdownMode === 'pct' ? (canDrillFurther ? 'Click a row to drill in · red = above that row\'s own target' : 'Red = above target') : (canDrillFurther ? 'Click a row to drill in · raw error counts, no target formatting' : 'Raw error counts, no target formatting')]),
+        ]),
+        el('div', { class: 'toggle-pill' }, [
+          el('button', { class: breakdownMode === 'pct' ? 'active' : '', onclick: () => { breakdownMode = 'pct'; render(); } }, ['Error %']),
+          el('button', { class: breakdownMode === 'absolute' ? 'active' : '', onclick: () => { breakdownMode = 'absolute'; render(); } }, ['Absolute']),
+        ]),
       ]),
     ]);
     breakdownCard.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
-      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = cellOrZero(matrix, k, w).errorPct; return acc; }, {}) })),
+      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { const c = cellOrZero(matrix, k, w); acc[w] = breakdownMode === 'pct' ? c.errorPct : c.errorCount; return acc; }, {}) })),
       cellFormatter: (v, w, rowKey) => {
+        if (breakdownMode === 'absolute') return { display: fmtInt(v), cls: '' };
         const rt = rowTargets[rowKey];
         return { display: fmtPct(v), cls: (rt === null || rt === undefined) ? '' : (v > rt ? 'cell-pct-bad' : 'cell-pct-good') };
       },
@@ -408,6 +417,7 @@ function PageDataCheck(container, fs) {
 
 function PageCategoryDrill(container, fs) {
   const allRows = DataStore.rawRows;
+  let breakdownMode = 'pct'; // 'pct' | 'absolute'
 
   function render() {
     container.innerHTML = '';
@@ -458,13 +468,19 @@ function PageCategoryDrill(container, fs) {
     renderStackedWeeklyChart(chartCard.querySelector('canvas'), weeks, groupKeys, groupErrorPctByWeek, undefined);
 
     const breakdownCard = el('div', { class: 'card' }, [
-      el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, [`Error % per Week by ${levelLabel}`])]),
+      el('div', { class: 'card-header' }, [
+        el('div', { class: 'card-title' }, [`${breakdownMode === 'pct' ? 'Error % per Week' : 'Absolute Errors per Week'} by ${levelLabel}`]),
+        el('div', { class: 'toggle-pill' }, [
+          el('button', { class: breakdownMode === 'pct' ? 'active' : '', onclick: () => { breakdownMode = 'pct'; render(); } }, ['Error %']),
+          el('button', { class: breakdownMode === 'absolute' ? 'active' : '', onclick: () => { breakdownMode = 'absolute'; render(); } }, ['Absolute']),
+        ]),
+      ]),
     ]);
     breakdownCard.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
-      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = matrix[k][w].errorPct; return acc; }, {}) })),
-      cellFormatter: (v) => ({ display: fmtPct(v), cls: '' }),
+      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = breakdownMode === 'pct' ? matrix[k][w].errorPct : matrix[k][w].errorCount; return acc; }, {}) })),
+      cellFormatter: (v) => breakdownMode === 'pct' ? { display: fmtPct(v), cls: '' } : { display: fmtInt(v), cls: '' },
     }));
     container.appendChild(breakdownCard);
 
