@@ -264,7 +264,72 @@ function PageRecipe(container, fs) {
   render();
 }
 
-// ---- Page 4: Error Category Drill Down -----------------------------------------
+// ---- Diagnostic: Data Check ----------------------------------------------------
+// Shows exactly what box-count denominator the app is using per week, straight
+// from GrowthModel, next to the raw error count from the EU sheet for that
+// week — so a collapsed/missing box count for a given week is immediately
+// visible instead of hiding inside a % calculation.
+
+function PageDataCheck(container, fs) {
+  function render() {
+    container.innerHTML = '';
+    setPageHeader('Data Check', 'Raw box counts and error counts per week — for spotting bad denominators');
+
+    const weeks = DataStore.weeks;
+    const allRows = DataStore.rawRows;
+
+    if (DataStore.duplicatesRemoved > 0) {
+      container.appendChild(el('div', { class: 'error-banner' }, [
+        el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['Duplicate rows found and removed']),
+        `${DataStore.rawRowCountBeforeDedup.toLocaleString()} rows came back from the EU sheet; ${DataStore.duplicatesRemoved.toLocaleString()} were exact duplicates (same box, timestamp, category, subcategory, complaint, and compensation amount) and have been excluded from every calculation on this dashboard. If a specific week's Error % still looks wrong after this, the duplicates likely aren't byte-for-byte identical (e.g. re-logged with a slightly different timestamp) — let me know which week and I can loosen the matching.`,
+      ]));
+    }
+
+    const rows = weeks.map(w => {
+      const gm = DataStore.growthModel[w];
+      const wErrors = allRows.filter(r => r.week === w).length;
+      const wComp = allRows.filter(r => r.week === w).reduce((s, r) => s + r.compensation, 0);
+      return {
+        week: w,
+        hasGrowthModelRow: !!gm,
+        nl: gm ? gm['FA-NL'] : 0, be: gm ? gm['FA-BE'] : 0, se: gm ? gm['FA-SE'] : 0,
+        dk: gm ? gm['FA-DK'] : 0, de: gm ? gm['FA-DE'] : 0, total: gm ? gm['FA-EU'] : 0,
+        errors: wErrors, compensation: wComp,
+        errorPct: gm && gm['FA-EU'] > 0 ? (wErrors / gm['FA-EU']) * 100 : null,
+      };
+    });
+
+    // Flag weeks whose box total looks suspiciously low relative to the
+    // typical week, since that's the failure mode that produces inflated %s.
+    const totals = rows.map(r => r.total).filter(t => t > 0).sort((a, b) => a - b);
+    const median = totals.length ? totals[Math.floor(totals.length / 2)] : 0;
+
+    const card = el('div', { class: 'card' }, [
+      el('div', { class: 'card-header' }, [
+        el('div', {}, [el('div', { class: 'card-title' }, ['Per-Week Data Trace']), el('div', { class: 'card-desc' }, [`Median weekly box total across all markets: ${fmtInt(median)} · rows shaded red are under 20% of that median, or missing from GrowthModel entirely`])]),
+      ]),
+    ]);
+
+    const headers = ['Week', 'Found in GrowthModel?', 'NL', 'BE', 'SE', 'DK', 'DE', 'Total Boxes', 'Errors (EU sheet)', 'Error %'];
+    const table = el('table', { class: 'data-table' });
+    table.appendChild(el('thead', {}, [el('tr', {}, headers.map(h => el('th', {}, [h])))]));
+    const tbody = el('tbody');
+    rows.forEach(r => {
+      const suspicious = !r.hasGrowthModelRow || (median > 0 && r.total < median * 0.2);
+      const tr = el('tr', suspicious ? { style: 'background:rgba(255,88,93,0.12);' } : {});
+      tr.appendChild(el('td', {}, [r.week]));
+      tr.appendChild(el('td', {}, [r.hasGrowthModelRow ? 'Yes' : 'NO — missing week']));
+      [r.nl, r.be, r.se, r.dk, r.de, r.total].forEach(v => tr.appendChild(el('td', { class: 'cell-num' }, [fmtInt(v)])));
+      tr.appendChild(el('td', { class: 'cell-num' }, [fmtInt(r.errors)]));
+      tr.appendChild(el('td', { class: 'cell-num' }, [r.errorPct === null ? '—' : fmtPct(r.errorPct)]));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    card.appendChild(el('div', { class: 'table-scroll' }, [table]));
+    container.appendChild(card);
+  }
+  render();
+}
 
 function PageCategoryDrill(container, fs) {
   const allRows = DataStore.rawRows;

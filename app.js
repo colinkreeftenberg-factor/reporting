@@ -8,6 +8,7 @@ const PAGES = [
   { id: 'recipe', label: 'Recipe Deep Dive', render: PageRecipe },
   { id: 'all', label: 'All Errors', render: PageAll },
   { id: 'category', label: 'Error Category Drill Down', render: PageCategoryDrill },
+  { id: 'datacheck', label: 'Data Check', render: PageDataCheck },
 ];
 
 const pageFilterStates = {}; // one isolated FilterState per page
@@ -103,7 +104,7 @@ async function init() {
   }
 
   statusDot.className = 'status-dot ok';
-  statusText.textContent = `${DataStore.rawRows.length.toLocaleString()} rows · ${DataStore.weeks.length} weeks`;
+  statusText.textContent = `${DataStore.rawRows.length.toLocaleString()} rows · ${DataStore.weeks.length} weeks` + (DataStore.duplicatesRemoved > 0 ? ` · ${DataStore.duplicatesRemoved} duplicate rows removed` : '');
   renderActivePage();
 }
 

@@ -119,8 +119,11 @@ const DataStore = {
     }
   },
 
+  rawRowCountBeforeDedup: 0,
+  duplicatesRemoved: 0,
+
   _processEu(parsed) {
-    this.rawRows = parsed.data
+    const mapped = parsed.data
       .filter(r => r.created_at || r.week)
       .map(r => ({
         created_at: r.created_at,
@@ -142,6 +145,24 @@ const DataStore = {
         comment: r.comment || '',
         delivery_status: r.delivery_status || '',
       }));
+
+    this.rawRowCountBeforeDedup = mapped.length;
+
+    // Guard against exact-duplicate rows — sheets driven by live formulas
+    // (QUERY/IMPORTRANGE, or a row-limited log like this one) can sometimes
+    // publish the same error row more than once, which would silently
+    // inflate a week's error count and its Error %.
+    const seen = new Set();
+    const deduped = [];
+    mapped.forEach(r => {
+      const key = [r.created_at, r.boxId, r.error_category, r.error_subcategory, r.complaint, r.compensation].join('||');
+      if (seen.has(key)) return;
+      seen.add(key);
+      deduped.push(r);
+    });
+    this.duplicatesRemoved = mapped.length - deduped.length;
+
+    this.rawRows = deduped;
     this.rawRows.forEach(r => { r.isAgent = isAgentRow(r); });
   },
 
