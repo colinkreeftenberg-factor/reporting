@@ -114,8 +114,16 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
 
     container.appendChild(kpiRowFor(agg));
 
+    // "All" (Agent/Cert + Bulk combined) version of the same filter, used only
+    // to keep the chart's group order/colors and Y-axis scale constant while
+    // toggling Agent/Cert vs Bulk — per instruction, only that toggle should
+    // leave the scale untouched; every other filter still rescales normally.
+    const filteredAll = fs.state.sourceType === 'all' ? filtered : filterRows(scopedRows, { ...filter, sourceType: 'all' });
     const matrix = buildWeekGroupMatrix(filtered, groupField, weeks, markets);
-    const groupKeys = level === 'team' ? orderTeamsGrouped(matrix, weeks) : orderGroupsByImpact(matrix, weeks);
+    const matrixAll = fs.state.sourceType === 'all' ? matrix : buildWeekGroupMatrix(filteredAll, groupField, weeks, markets);
+    const cellOrZero = (m, k, w) => (m[k] && m[k][w]) || { errorCount: 0, compensationTotal: 0, errorPct: 0, compPerBox: 0 };
+
+    const groupKeys = level === 'team' ? orderTeamsGrouped(matrixAll, weeks) : orderGroupsByImpact(matrixAll, weeks);
     const canDrillFurther = DRILL_CHAIN.indexOf(level) < DRILL_CHAIN.length - 1;
 
     if (!groupKeys.length || !weeks.length) {
@@ -131,16 +139,30 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
 
     // ---- Chart 1: stacked weekly Error % by group, with legend + total label ----
     const groupErrorPctByWeek = {};
-    groupKeys.forEach(k => { groupErrorPctByWeek[k] = {}; weeks.forEach(w => { groupErrorPctByWeek[k][w] = matrix[k][w].errorPct; }); });
+    const remainderByWeek = fs.state.sourceType === 'all' ? null : {};
+    groupKeys.forEach(k => {
+      groupErrorPctByWeek[k] = {};
+      if (remainderByWeek) remainderByWeek[k] = {};
+      weeks.forEach(w => {
+        const selected = cellOrZero(matrix, k, w).errorPct;
+        groupErrorPctByWeek[k][w] = selected;
+        if (remainderByWeek) remainderByWeek[k][w] = Math.max(0, cellOrZero(matrixAll, k, w).errorPct - selected);
+      });
+    });
+    const fullTotals = weeks.map(w => groupKeys.reduce((s, k) => s + cellOrZero(matrixAll, k, w).errorPct, 0));
+    const fixedMax = Math.max(...fullTotals, 0.01) * 1.18;
 
     const chartCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly Error % by ${levelLabel}`]), el('div', { class: 'card-desc' }, ['Stacked by ' + levelLabel.toLowerCase() + ' · shaded band = combined target across the stack · total % labeled above each bar'])]),
+        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly Error % by ${levelLabel}`]), el('div', { class: 'card-desc' }, [
+          'Stacked by ' + levelLabel.toLowerCase() + ' · shaded band = combined target across the stack · total % labeled above each bar' +
+          (remainderByWeek ? ' · dimmed portion = excluded by the Agent/Cert-Bulk toggle, shown for comparison' : ''),
+        ])]),
       ]),
       el('div', { class: 'chart-wrap' }, [el('canvas')]),
     ]);
     container.appendChild(chartCard);
-    renderStackedWeeklyChart(chartCard.querySelector('canvas'), weeks, groupKeys, groupErrorPctByWeek, target);
+    renderStackedWeeklyChart(chartCard.querySelector('canvas'), weeks, groupKeys, groupErrorPctByWeek, target, { remainderByWeek, fixedMax });
 
     // ---- Table 1: Error % per week per group (breakdown), colored vs EACH ROW'S OWN target ----
     const breakdownCard = el('div', { class: 'card' }, [
@@ -151,7 +173,7 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     breakdownCard.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
-      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = matrix[k][w].errorPct; return acc; }, {}) })),
+      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = cellOrZero(matrix, k, w).errorPct; return acc; }, {}) })),
       cellFormatter: (v, w, rowKey) => {
         const rt = rowTargets[rowKey];
         return { display: fmtPct(v), cls: (rt === null || rt === undefined) ? '' : (v > rt ? 'cell-pct-bad' : 'cell-pct-good') };
@@ -175,7 +197,7 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     compCard.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
-      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = compensationMode === 'total' ? matrix[k][w].compensationTotal : matrix[k][w].compPerBox; return acc; }, {}) })),
+      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { const c = cellOrZero(matrix, k, w); acc[w] = compensationMode === 'total' ? c.compensationTotal : c.compPerBox; return acc; }, {}) })),
       cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v), cls: '' }),
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
     }));
@@ -244,8 +266,8 @@ function PageRecipe(container, fs) {
     const orderedTeamStats = [...production, ...others];
     const teams = orderedTeamStats.map(t => t.team);
 
-    container.appendChild(el('div', { class: 'compact-stat-row' }, orderedTeamStats.map(t =>
-      el('div', { class: 'compact-stat' }, [
+    container.appendChild(el('div', { class: 'compact-stat-row' }, orderedTeamStats.map((t, i) =>
+      el('div', { class: 'compact-stat', style: `--accent-color:${colorForIndex(i)};` }, [
         el('div', { class: 'compact-stat-label' }, [t.team]),
         el('div', { class: 'compact-stat-value' }, [`${fmtInt(t.errorCount)} errors`]),
         el('div', { class: 'compact-stat-sub' }, [fmtEur(t.compensationTotal)]),

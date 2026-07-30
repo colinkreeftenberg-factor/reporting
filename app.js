@@ -112,4 +112,13 @@ document.getElementById('menuBtn')?.addEventListener('click', () => {
   document.getElementById('sidebar').classList.toggle('open');
 });
 
+// Close any open filter panel only when the click is genuinely outside a
+// filter group — a single listener for the page's lifetime, so clicking a
+// checkbox to select multiple values in one sitting no longer closes it.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.filter-group')) {
+    document.querySelectorAll('.filter-panel.open').forEach(p => p.classList.remove('open'));
+  }
+});
+
 init();

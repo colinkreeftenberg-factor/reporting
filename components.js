@@ -28,6 +28,17 @@ const fmtEurPrecise = n => '€' + n.toLocaleString('en-GB', { minimumFractionDi
 // a color outright.
 const GROUP_COLOR_BASE = ['#18849F', '#FF585D', '#75C26D', '#C79C00', '#9B2629', '#61DFFF', '#206B19', '#6B6A63', '#8B5CF6', '#E8590C'];
 
+function withAlpha(color, alpha) {
+  if (color.startsWith('#')) {
+    const n = parseInt(color.slice(1), 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  const m = color.match(/rgb\(([\d.]+),\s*([\d.]+),\s*([\d.]+)\)/);
+  if (m) return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha})`;
+  return color;
+}
+
 function lightenHex(hex, amount) {
   const n = parseInt(hex.slice(1), 16);
   const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
@@ -122,10 +133,6 @@ function FilterBar(fs, spec, onAnyChange) {
     group.appendChild(panel);
     bar.appendChild(group);
   });
-
-  document.addEventListener('click', () => {
-    document.querySelectorAll('.filter-panel.open').forEach(p => p.classList.remove('open'));
-  }, { once: true });
 
   return bar;
 }
@@ -465,17 +472,41 @@ const totalLabelPlugin = {
 };
 
 // groupErrorPctByWeek: { group: { week: errorPct } }, groups already ordered
-function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, targetPct) {
-  const datasets = groups.map((g, i) => ({
-    label: g,
-    data: weeks.map(w => groupErrorPctByWeek[g][w] || 0),
-    backgroundColor: colorForIndex(i),
-    stack: 'errors',
-    borderRadius: 4,
-    maxBarThickness: 64,
-  }));
-  const totals = weeks.map(w => groups.reduce((s, g) => s + (groupErrorPctByWeek[g][w] || 0), 0));
-  const maxTotal = Math.max(...totals, 0.01);
+// groupErrorPctByWeek: selected (current toggle) values. remainderByWeek: the
+// portion excluded by the current Agent/Cert-vs-Bulk toggle (optional) — drawn
+// as a dimmed continuation of the same segment so the bar's total height, and
+// therefore the Y-axis scale, stays constant while toggling between All/Agent/Bulk.
+// fixedMax, if given, pins suggestedMax so only non-toggle filters (team, week,
+// market, category) can change the scale.
+function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, targetPct, opts = {}) {
+  const remainderByWeek = opts.remainderByWeek || null;
+  const datasets = [];
+  groups.forEach((g, i) => {
+    const color = colorForIndex(i);
+    datasets.push({
+      label: g,
+      data: weeks.map(w => groupErrorPctByWeek[g][w] || 0),
+      backgroundColor: color,
+      stack: 'errors',
+      borderRadius: 4,
+      maxBarThickness: 64,
+    });
+    if (remainderByWeek) {
+      datasets.push({
+        label: g + ' — excluded by current toggle',
+        data: weeks.map(w => (remainderByWeek[g] && remainderByWeek[g][w]) || 0),
+        backgroundColor: withAlpha(color, 0.25),
+        stack: 'errors',
+        borderRadius: 4,
+        maxBarThickness: 64,
+        _isRemainder: true,
+      });
+    }
+  });
+
+  const selectedTotals = weeks.map(w => groups.reduce((s, g) => s + (groupErrorPctByWeek[g][w] || 0), 0));
+  const fullTotals = weeks.map((w, i) => selectedTotals[i] + (remainderByWeek ? groups.reduce((s, g) => s + ((remainderByWeek[g] && remainderByWeek[g][w]) || 0), 0) : 0));
+  const maxTotal = opts.fixedMax !== undefined ? opts.fixedMax : Math.max(...fullTotals, 0.01);
 
   return new Chart(canvas, {
     type: 'bar',
@@ -488,13 +519,20 @@ function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, ta
       plugins: {
         legend: {
           display: true, position: 'bottom',
-          labels: { boxWidth: 12, boxHeight: 12, padding: 14, font: { family: 'IBM Plex Sans', size: 11.5 }, usePointStyle: false },
+          labels: {
+            boxWidth: 12, boxHeight: 12, padding: 14, font: { family: 'IBM Plex Sans', size: 11.5 }, usePointStyle: false,
+            filter: (item, data) => !data.datasets[item.datasetIndex]._isRemainder,
+          },
         },
         tooltip: {
           backgroundColor: '#141414', padding: 12, cornerRadius: 10,
-          callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)}%` },
+          callbacks: {
+            label: (ctx) => ctx.dataset._isRemainder
+              ? ` ${ctx.dataset.label.replace(' — excluded by current toggle', '')}: +${ctx.raw.toFixed(2)}% excluded by toggle`
+              : ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)}%`,
+          },
         },
-        totalLabelPlugin: { totals },
+        totalLabelPlugin: { totals: fullTotals },
         targetBandPlugin: { value: targetPct },
       },
       scales: {
