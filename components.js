@@ -303,7 +303,224 @@ function renderBarChart(canvas, labels, values, opts = {}) {
   return chart;
 }
 
-// ---- Sortable, drill-down table --------------------------------------------------
+// ---- Week range slider ---------------------------------------------------------
+
+// Selecting one week is done by dragging both handles together; a range is
+// just dragging them apart. An empty fs.state.weeks means "all weeks".
+function weeksToRange(selectedWeeks, allWeeks) {
+  if (!selectedWeeks || !selectedWeeks.length) return [0, allWeeks.length - 1];
+  const idxs = selectedWeeks.map(w => allWeeks.indexOf(w)).filter(i => i >= 0);
+  if (!idxs.length) return [0, allWeeks.length - 1];
+  return [Math.min(...idxs), Math.max(...idxs)];
+}
+
+function WeekSlider(fs, onAnyChange) {
+  const weeks = DataStore.weeks;
+  const n = weeks.length;
+  let [startIdx, endIdx] = weeksToRange(fs.state.weeks, weeks);
+
+  const wrap = el('div', { class: 'week-slider' });
+  const labelEl = el('div', { class: 'week-slider-label' });
+  const track = el('div', { class: 'week-slider-track' });
+  const rangeFill = el('div', { class: 'week-slider-range' });
+  const handleStart = el('div', { class: 'week-slider-handle', tabindex: '0' });
+  const handleEnd = el('div', { class: 'week-slider-handle', tabindex: '0' });
+  track.appendChild(rangeFill);
+  track.appendChild(handleStart);
+  track.appendChild(handleEnd);
+
+  function pct(i) { return n > 1 ? (i / (n - 1)) * 100 : 0; }
+
+  function paint() {
+    labelEl.textContent = n === 0 ? 'No weeks available' : startIdx === endIdx ? weeks[startIdx] : `${weeks[startIdx]} → ${weeks[endIdx]}`;
+    handleStart.style.left = pct(startIdx) + '%';
+    handleEnd.style.left = pct(endIdx) + '%';
+    rangeFill.style.left = pct(startIdx) + '%';
+    rangeFill.style.width = (pct(endIdx) - pct(startIdx)) + '%';
+  }
+  paint();
+
+  function commit() {
+    fs.state.weeks = (startIdx === 0 && endIdx === n - 1) ? [] : weeks.slice(startIdx, endIdx + 1);
+    onAnyChange();
+  }
+
+  function dragHandle(handle, isStart) {
+    const onDown = (e) => {
+      e.preventDefault();
+      const rect = track.getBoundingClientRect();
+      const onMove = (ev) => {
+        const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
+        const x = Math.min(Math.max(clientX - rect.left, 0), rect.width);
+        const ratio = rect.width ? x / rect.width : 0;
+        let idx = Math.round(ratio * (n - 1));
+        if (isStart) { idx = Math.min(idx, endIdx); startIdx = idx; }
+        else { idx = Math.max(idx, startIdx); endIdx = idx; }
+        paint();
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onUp);
+        commit();
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.addEventListener('touchmove', onMove);
+      document.addEventListener('touchend', onUp);
+    };
+    handle.addEventListener('mousedown', onDown);
+    handle.addEventListener('touchstart', onDown);
+  }
+  dragHandle(handleStart, true);
+  dragHandle(handleEnd, false);
+
+  track.addEventListener('click', (e) => {
+    if (e.target === handleStart || e.target === handleEnd) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = rect.width ? (e.clientX - rect.left) / rect.width : 0;
+    const idx = Math.round(ratio * (n - 1));
+    if (Math.abs(idx - startIdx) <= Math.abs(idx - endIdx)) startIdx = Math.min(idx, endIdx); else endIdx = Math.max(idx, startIdx);
+    paint();
+    commit();
+  });
+
+  const quick = el('div', { class: 'week-slider-quick' }, [
+    el('button', { onclick: () => { startIdx = 0; endIdx = n - 1; paint(); commit(); } }, ['All weeks']),
+    el('button', { onclick: () => { startIdx = n - 1; endIdx = n - 1; paint(); commit(); } }, ['Latest week only']),
+  ]);
+
+  wrap.appendChild(el('div', { class: 'week-slider-top' }, [
+    el('span', { class: 'week-slider-title' }, ['Week']),
+    labelEl,
+  ]));
+  wrap.appendChild(track);
+  wrap.appendChild(quick);
+  return wrap;
+}
+
+// ---- Market pill row (one-click country buttons, in addition to the dropdown) --
+
+function MarketPillRow(fs, onAnyChange) {
+  const wrap = el('div', { class: 'market-pill-row' });
+  MARKET_FILTER_OPTIONS.forEach(opt => {
+    const active = fs.state.markets.includes(opt);
+    const btn = el('button', {
+      class: 'market-pill' + (active ? ' active' : ''),
+      onclick: () => {
+        if (opt === 'FA-EU') {
+          fs.state.markets = fs.state.markets.includes('FA-EU') ? [] : ['FA-EU'];
+        } else {
+          const next = fs.state.markets.filter(v => v !== 'FA-EU');
+          const idx = next.indexOf(opt);
+          if (idx >= 0) next.splice(idx, 1); else next.push(opt);
+          fs.state.markets = next;
+        }
+        onAnyChange();
+      },
+    }, [opt === 'FA-EU' ? 'All (EU)' : opt.replace('FA-', '')]);
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
+// ---- Stacked weekly chart (teams/groups stacked per week, total % on top) ------
+
+const totalLabelPlugin = {
+  id: 'totalLabelPlugin',
+  afterDatasetsDraw(chart, args, pluginOpts) {
+    const totals = pluginOpts && pluginOpts.totals;
+    if (!totals) return;
+    const meta = chart.getDatasetMeta(0);
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.fillStyle = '#141414';
+    ctx.font = "700 12px 'Plus Jakarta Sans', sans-serif";
+    ctx.textAlign = 'center';
+    totals.forEach((total, i) => {
+      const bar = meta.data[i];
+      if (!bar) return;
+      const yPix = chart.scales.y.getPixelForValue(total);
+      ctx.fillText(total.toFixed(2) + '%', bar.x, yPix - 8);
+    });
+    ctx.restore();
+  },
+};
+
+// groupErrorPctByWeek: { group: { week: errorPct } }, groups already ordered
+function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, targetPct) {
+  const palette = ['#141414', '#18849F', '#C79C00', '#75C26D', '#FF585D', '#61DFFF', '#206B19', '#9B2629', '#6B6A63'];
+  const datasets = groups.map((g, i) => ({
+    label: g,
+    data: weeks.map(w => groupErrorPctByWeek[g][w] || 0),
+    backgroundColor: palette[i % palette.length],
+    stack: 'errors',
+    borderRadius: 4,
+    maxBarThickness: 64,
+  }));
+  const totals = weeks.map(w => groups.reduce((s, g) => s + (groupErrorPctByWeek[g][w] || 0), 0));
+  const maxTotal = Math.max(...totals, 0.01);
+
+  return new Chart(canvas, {
+    type: 'bar',
+    data: { labels: weeks, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 500 },
+      layout: { padding: { top: 26 } },
+      plugins: {
+        legend: {
+          display: true, position: 'bottom',
+          labels: { boxWidth: 12, boxHeight: 12, padding: 14, font: { family: 'IBM Plex Sans', size: 11.5 }, usePointStyle: false },
+        },
+        tooltip: {
+          backgroundColor: '#141414', padding: 12, cornerRadius: 10,
+          callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)}%` },
+        },
+        totalLabelPlugin: { totals },
+        targetBandPlugin: { value: targetPct },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, beginAtZero: true, suggestedMax: maxTotal * 1.18, ticks: { callback: v => v + '%' }, grid: { color: 'rgba(20,20,20,0.06)' } },
+      },
+    },
+    plugins: [targetBandPlugin, totalLabelPlugin],
+  });
+}
+
+// ---- Per-week pivot table (rows = group, columns = weeks) ----------------------
+
+// rows: [{ key, cells: { week: number } }]; cellFormatter(value) -> {display, cls}
+function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick }) {
+  const wrap = el('div', { class: 'table-scroll' });
+  const table = el('table', { class: 'data-table' });
+  const thead = el('thead');
+  thead.appendChild(el('tr', {}, [el('th', {}, [rowLabel]), ...weeks.map(w => el('th', {}, [w]))]));
+  table.appendChild(thead);
+
+  const tbody = el('tbody');
+  if (!rows.length) {
+    tbody.appendChild(el('tr', {}, [el('td', { colspan: String(weeks.length + 1) }, [
+      el('div', { class: 'empty-state' }, [el('div', { class: 'icon' }, ['—']), 'No rows match the current filters.']),
+    ])]));
+  }
+  rows.forEach(row => {
+    const tr = el('tr', { onclick: onRowClick ? () => onRowClick(row.key) : null });
+    tr.appendChild(el('td', {}, [row.key]));
+    weeks.forEach(w => {
+      const val = row.cells[w];
+      const { display, cls } = cellFormatter(val, w);
+      tr.appendChild(el('td', { class: 'cell-num ' + (cls || '') }, [display]));
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
 
 // columns: [{key,label,align,numeric,pct}], rows: array of plain objects
 // onRowClick(row) optional -> enables drill-through

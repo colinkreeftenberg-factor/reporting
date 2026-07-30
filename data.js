@@ -84,7 +84,10 @@ function weekSortKey(w) {
 
 function isAgentRow(row) {
   // Agent/Cert = everything where override_reason isn't the bulk-import marker.
-  return (row.override_reason || '').trim() !== 'Uploaded with bulk import';
+  // Matched case-insensitively and by substring, since real sheet values can
+  // vary slightly in casing/whitespace around the exact marker text.
+  const reason = (row.override_reason || '').trim().toLowerCase();
+  return !reason.includes('bulk import');
 }
 
 // ---- Store ------------------------------------------------------------------
@@ -221,7 +224,42 @@ function aggregate(rows, weeks, markets) {
   return { errorCount, compensationTotal, boxes, errorPct, compPerBox };
 }
 
-// Blended target (%) for a set of teams across a set of markets, weighted by
+// Builds { [groupKey]: { [week]: {errorCount, compensationTotal, errorPct, compPerBox} } }
+// Every value is computed per-week (never summed across the selected weeks),
+// per Colin's requirement that tables/charts show values per week.
+function buildWeekGroupMatrix(rows, groupField, weeks, markets) {
+  const groupKeys = Array.from(new Set(rows.map(r => r[groupField]).filter(Boolean)));
+  const boxesByWeek = {};
+  weeks.forEach(w => { boxesByWeek[w] = DataStore.boxCount(markets, [w]); });
+
+  const matrix = {};
+  groupKeys.forEach(k => {
+    matrix[k] = {};
+    weeks.forEach(w => {
+      const wRows = rows.filter(r => r.week === w && r[groupField] === k);
+      const errorCount = wRows.length;
+      const compensationTotal = wRows.reduce((s, r) => s + r.compensation, 0);
+      const boxes = boxesByWeek[w];
+      matrix[k][w] = {
+        errorCount,
+        compensationTotal,
+        errorPct: boxes > 0 ? (errorCount / boxes) * 100 : 0,
+        compPerBox: boxes > 0 ? compensationTotal / boxes : 0,
+      };
+    });
+  });
+  return matrix;
+}
+
+// Orders group keys by total error volume across the given weeks — used only
+// to decide stacking/row order, never displayed as an accumulated figure.
+function orderGroupsByImpact(matrix, weeks) {
+  return Object.keys(matrix).sort((a, b) => {
+    const totalA = weeks.reduce((s, w) => s + (matrix[a][w] ? matrix[a][w].errorCount : 0), 0);
+    const totalB = weeks.reduce((s, w) => s + (matrix[b][w] ? matrix[b][w].errorCount : 0), 0);
+    return totalB - totalA;
+  });
+}
 // each market's box volume over the selected weeks. Multiple teams are
 // summed, since each team's target represents an independent error budget
 // against the same box denominator.

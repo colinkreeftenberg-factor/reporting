@@ -259,7 +259,41 @@ button{font-family:inherit;}
 }
 .filter-clear:hover{color:var(--text-primary);}
 
-/* ---------- Toggle pill (Total vs Per-box, Agent vs Bulk) ---------- */
+/* ---------- Week range slider ---------- */
+.week-slider{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+  padding:16px 20px; margin-bottom:14px; box-shadow:var(--shadow-card);
+}
+.week-slider-top{display:flex; align-items:baseline; gap:10px; margin-bottom:14px;}
+.week-slider-title{font-family:var(--font-utility); font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-secondary);}
+.week-slider-label{font-family:var(--font-display); font-weight:700; font-size:15px;}
+.week-slider-track{
+  position:relative; height:6px; background:var(--surface-sunken); border-radius:999px;
+  margin:0 10px 14px 10px;
+}
+.week-slider-range{position:absolute; top:0; height:100%; background:var(--saffron); border-radius:999px;}
+.week-slider-handle{
+  position:absolute; top:50%; width:20px; height:20px; margin-left:-10px; transform:translateY(-50%);
+  background:var(--carbon); border:3px solid var(--natural); border-radius:50%;
+  box-shadow:0 1px 4px rgba(20,20,20,0.3); cursor:grab; touch-action:none;
+}
+.week-slider-handle:active{cursor:grabbing;}
+.week-slider-quick{display:flex; gap:8px;}
+.week-slider-quick button{
+  border:1px solid var(--border); background:var(--surface-sunken); color:var(--text-secondary);
+  font-size:12px; font-weight:600; padding:6px 12px; border-radius:999px; cursor:pointer;
+}
+.week-slider-quick button:hover{border-color:var(--text-tertiary); color:var(--text-primary);}
+
+/* ---------- Market pill row ---------- */
+.market-pill-row{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
+.market-pill{
+  padding:9px 16px; border-radius:999px; border:1px solid var(--border); background:var(--surface);
+  font-size:13.5px; font-weight:600; color:var(--text-primary); cursor:pointer; transition:all .15s ease;
+}
+.market-pill:hover{border-color:var(--text-tertiary);}
+.market-pill.active{background:var(--carbon); color:var(--saffron); border-color:var(--carbon);}
+
 .toggle-pill{
   display:flex; background:var(--surface-sunken); border-radius:999px; padding:3px; border:1px solid var(--border);
 }
