@@ -31,7 +31,6 @@ function standardFilterSpec(fs, rows, { includeTeamFilter = true, teamScope = nu
 function kpiRowFor(agg) {
   return el('div', { class: 'kpi-row' }, [
     KpiCard({ label: 'Error %', value: fmtPct(agg.errorPct) }),
-    KpiCard({ label: 'Total Errors', value: fmtInt(agg.errorCount) }),
     KpiCard({ label: 'Total Compensation', value: fmtEur(agg.compensationTotal) }),
     KpiCard({ label: 'Compensation / Box', value: fmtEurPrecise(agg.compPerBox) }),
     KpiCard({ label: 'Total Boxes', value: fmtInt(agg.boxes) }),
@@ -79,11 +78,6 @@ function applyDrillToFilter(fs, baseFilter) {
 
 function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
   const allRows = DataStore.rawRows;
-  const baseFilter = {
-    markets: fs.state.markets, errorCategory: fs.state.errorCategory,
-    errorSubcategory: fs.state.errorSubcategory, complaint: fs.state.complaint, sourceType: fs.state.sourceType,
-    teams: teamScope || [],
-  };
   const scopedRows = teamScope ? allRows.filter(r => teamScope.includes(r.team)) : allRows;
 
   let compensationMode = 'total'; // 'total' | 'perbox'
@@ -99,7 +93,16 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     const spec = standardFilterSpec(fs, scopedRows, { includeTeamFilter: !fs.drillPath.length, teamScope });
     container.appendChild(FilterBar(fs, spec, render));
 
-    const filter = applyDrillToFilter(fs, { ...baseFilter, weeks: fs.state.weeks, teams: fs.state.teams.length ? fs.state.teams : teamScope });
+    // Built fresh every render from live fs.state — this must never be
+    // captured once outside render(), or filter changes silently stop
+    // affecting the error count while the box count keeps updating.
+    const baseFilter = {
+      markets: fs.state.markets, errorCategory: fs.state.errorCategory,
+      errorSubcategory: fs.state.errorSubcategory, complaint: fs.state.complaint, sourceType: fs.state.sourceType,
+      weeks: fs.state.weeks,
+      teams: fs.state.teams.length ? fs.state.teams : (teamScope || []),
+    };
+    const filter = applyDrillToFilter(fs, baseFilter);
     const weeks = fs.effectiveWeeks();
     const markets = fs.effectiveMarkets();
     const filtered = filterRows(scopedRows, filter);
@@ -241,8 +244,12 @@ function PageRecipe(container, fs) {
     const orderedTeamStats = [...production, ...others];
     const teams = orderedTeamStats.map(t => t.team);
 
-    container.appendChild(el('div', { class: 'kpi-row' }, orderedTeamStats.map(t =>
-      KpiCard({ label: t.team, value: fmtInt(t.errorCount) + ' errors', sub: fmtEur(t.compensationTotal) + ' compensation' })
+    container.appendChild(el('div', { class: 'compact-stat-row' }, orderedTeamStats.map(t =>
+      el('div', { class: 'compact-stat' }, [
+        el('div', { class: 'compact-stat-label' }, [t.team]),
+        el('div', { class: 'compact-stat-value' }, [`${fmtInt(t.errorCount)} errors`]),
+        el('div', { class: 'compact-stat-sub' }, [fmtEur(t.compensationTotal)]),
+      ])
     )));
 
     teams.forEach(team => {
@@ -299,22 +306,35 @@ function PageDataCheck(container, fs) {
     const weeks = DataStore.weeks;
     const allRows = DataStore.rawRows;
 
-    if (DataStore.duplicatesRemoved > 0) {
-      container.appendChild(el('div', { class: 'error-banner' }, [
-        el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['Duplicate rows found and removed']),
-        `${DataStore.rawRowCountBeforeDedup.toLocaleString()} rows came back from the EU sheet; ${DataStore.duplicatesRemoved.toLocaleString()} were exact duplicates (same box, timestamp, category, subcategory, complaint, and compensation amount) and have been excluded from every calculation on this dashboard. If a specific week's Error % still looks wrong after this, the duplicates likely aren't byte-for-byte identical (e.g. re-logged with a slightly different timestamp) — let me know which week and I can loosen the matching.`,
-      ]));
-    }
-
     if (DataStore.growthModelColumnMap) {
-      const { weekKey, resolvedCols, totalKey } = DataStore.growthModelColumnMap;
+      const { weekKey, resolvedCols, totalKey, allHeaders } = DataStore.growthModelColumnMap;
       const missing = Object.entries(resolvedCols).filter(([, v]) => !v).map(([k]) => k);
       container.appendChild(el('div', { class: missing.length ? 'error-banner' : 'config-banner' }, [
         el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['GrowthModel column mapping']),
+        el('div', { style: 'margin-bottom:8px;' }, [`Every column header actually found in your GrowthModel CSV: ${allHeaders.map(h => `"${h}"`).join(', ')}`]),
         `Week column read from "${weekKey}". `,
-        Object.entries(resolvedCols).map(([fa, col]) => `${fa} ← ${col || 'NOT FOUND'}`).join('  ·  '),
-        `  ·  Total ← ${totalKey || '(summed from the 5 market columns above)'}`,
-        missing.length ? ` — ${missing.join(', ')} could not be matched to any column, so that market's box count is reading as 0. Check the exact header spelling in GrowthModel.` : '',
+        Object.entries(resolvedCols).map(([fa, col]) => `${fa} ← ${col ? `"${col}"` : 'NOT FOUND'}`).join('  ·  '),
+        `  ·  Total ← ${totalKey ? `"${totalKey}"` : '(summed from the 5 market columns above)'}`,
+        missing.length ? ` — ${missing.join(', ')} could not be matched to any column above, so that market's box count is reading as 0.` : '',
+      ]));
+    }
+
+    // Hard invariant check: a single market's box count can never legitimately
+    // exceed the combined total. If it does, or if the 5 markets don't sum to
+    // the total column, the column mapping above is wrong — this makes that
+    // undeniable instead of inferred from a percentage looking "off".
+    const mismatchRows = weeks.map(w => {
+      const gm = DataStore.growthModel[w];
+      if (!gm) return null;
+      const sumOfFive = gm['FA-NL'] + gm['FA-BE'] + gm['FA-SE'] + gm['FA-DK'] + gm['FA-DE'];
+      return { week: w, sumOfFive, total: gm['FA-EU'], mismatch: Math.abs(sumOfFive - gm['FA-EU']) > 1 };
+    }).filter(Boolean);
+    const anyMismatch = mismatchRows.some(r => r.mismatch);
+    if (anyMismatch) {
+      container.appendChild(el('div', { class: 'error-banner' }, [
+        el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['NL+BE+SE+DK+DE does not equal the Total column']),
+        'This means the column mapping above is picking up the wrong column(s) for at least one market. Weeks affected: ' +
+        mismatchRows.filter(r => r.mismatch).map(r => `${r.week} (sum=${fmtInt(r.sumOfFive)} vs total=${fmtInt(r.total)})`).join(', '),
       ]));
     }
 

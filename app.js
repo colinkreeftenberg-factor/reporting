@@ -104,7 +104,7 @@ async function init() {
   }
 
   statusDot.className = 'status-dot ok';
-  statusText.textContent = `${DataStore.rawRows.length.toLocaleString()} rows · ${DataStore.weeks.length} weeks` + (DataStore.duplicatesRemoved > 0 ? ` · ${DataStore.duplicatesRemoved} duplicate rows removed` : '');
+  statusText.textContent = `${DataStore.rawRows.length.toLocaleString()} rows · ${DataStore.weeks.length} weeks`;
   renderActivePage();
 }
 
