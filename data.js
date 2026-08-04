@@ -359,6 +359,26 @@ function blendedTarget(teams, markets, weeks) {
   return anyTeamHasTarget ? blended : null;
 }
 
+// Drill chain for the Logistics page: subcategory → complaint → detail.
+// Unlike issueTypeKey (a flattened composite string), this lets the page
+// start broad and progressively expand — a flat 3-level table is unreadable
+// once there are more than a handful of combinations.
+const LOGISTICS_DRILL_CHAIN = ['error_subcategory', 'complaint', 'mapped_detail_1'];
+
+// Blank subcategory/complaint/detail values would otherwise be silently
+// dropped by buildWeekGroupMatrix's truthy filter — this keeps them visible
+// as their own "(none)" group instead of disappearing.
+function withBlankGroupLabel(rows, field) {
+  return rows.map(r => Object.assign({}, r, { [field]: r[field] || '(none)' }));
+}
+
+// Filters rows down to whatever drill path has been pushed so far, where
+// each crumb's level is directly a row field name (e.g. 'error_subcategory').
+function applyGenericDrillFilter(rows, drillPath) {
+  if (!drillPath.length) return rows;
+  return rows.filter(r => drillPath.every(c => r[c.level] === c.value));
+}
+
 // Composite "issue type" key combining subcategory/complaint/detail into one
 // grouping dimension, since the Logistics sheet doesn't have team/category
 // levels to drill through — blank detail values display as "—" not "-1".

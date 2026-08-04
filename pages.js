@@ -639,32 +639,42 @@ function PageLogistics(container, fs) {
       return;
     }
 
-    // ---- Section 1: stacked weekly chart by issue type (subcategory → complaint → detail) ----
-    const rowsWithIssue = filtered.map(r => Object.assign({}, r, { issueType: issueTypeKey(r) }));
-    const issueMatrix = buildWeekGroupMatrix(rowsWithIssue, 'issueType', weeks, markets);
+    // ---- Sections 1 & 2: drillable subcategory → complaint → detail breakdown ----
+    // Starts broad (just subcategories) and expands on click — a flat 3-level
+    // table gets unreadable once there are more than a handful of combinations.
+    const level = LOGISTICS_DRILL_CHAIN[Math.min(fs.drillPath.length, LOGISTICS_DRILL_CHAIN.length - 1)];
+    const levelLabel = { error_subcategory: 'Subcategory', complaint: 'Complaint', mapped_detail_1: 'Detail' }[level];
+    const canDrillFurther = LOGISTICS_DRILL_CHAIN.indexOf(level) < LOGISTICS_DRILL_CHAIN.length - 1;
+
+    const drillFilteredRows = applyGenericDrillFilter(filtered, fs.drillPath);
+    const rowsForLevel = withBlankGroupLabel(drillFilteredRows, level);
+    const issueMatrix = buildWeekGroupMatrix(rowsForLevel, level, weeks, markets);
     const issueKeys = orderGroupsByImpact(issueMatrix, weeks);
+
+    container.appendChild(Breadcrumb('All Subcategories', fs, render));
 
     const issuePctByWeek = {};
     issueKeys.forEach(k => { issuePctByWeek[k] = {}; weeks.forEach(w => { issuePctByWeek[k][w] = issueMatrix[k][w].errorPct; }); });
 
     const chart1Card = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, ['Weekly Error % by Issue Type']), el('div', { class: 'card-desc' }, ['Stacked by subcategory → complaint → detail · shaded band = Last Mile target · blank detail (was "-1") shown as "(uncategorized)"'])]),
+        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly Error % by ${levelLabel}`]), el('div', { class: 'card-desc' }, ['Shaded band = Last Mile target · click a row in the table below to drill in'])]),
       ]),
       el('div', { class: 'chart-wrap' }, [el('canvas')]),
     ]);
     container.appendChild(chart1Card);
     renderStackedWeeklyChart(chart1Card.querySelector('canvas'), weeks, issueKeys, issuePctByWeek, target);
 
-    // ---- Section 2: Error % table by issue type, with Totals row ----
+    // ---- Section 2: Error % table by current drill level, with Totals row ----
     const table1Card = el('div', { class: 'card' }, [
-      el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, ['Error % per Week by Issue Type']), el('div', { class: 'card-desc' }, ['Red = above the Last Mile target'])]),
+      el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, [`Error % per Week by ${levelLabel}`]), el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in · red = above the Last Mile target' : 'Red = above the Last Mile target'])]),
     ]);
     table1Card.appendChild(PivotTable({
-      rowLabel: 'Issue Type',
+      rowLabel: levelLabel,
       weeks,
       rows: issueKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMatrix[k][w].errorPct; return acc; }, {}) })),
       cellFormatter: (v) => ({ display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : 'cell-pct-good' }),
+      onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
       totalsRow: {
         cells: weeks.reduce((acc, w) => { acc[w] = issueKeys.reduce((s, k) => s + issueMatrix[k][w].errorPct, 0); return acc; }, {}),
         cellFormatter: (v) => ({ display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : '' }),
@@ -686,14 +696,15 @@ function PageLogistics(container, fs) {
     container.appendChild(chart2Card);
     renderMultiLineChart(chart2Card.querySelector('canvas'), weeks, carrierSeries, { targetPct: target });
 
-    // ---- Section 4: per-carrier issue-type breakdown cards ----
-    container.appendChild(el('div', { style: 'margin:28px 0 4px 4px; font-family:var(--font-display); font-weight:700; font-size:17px;' }, ['Issue Type Breakdown per Carrier']));
+    // ---- Section 4: per-carrier breakdown cards, same drill level as above ----
+    container.appendChild(el('div', { style: 'margin:28px 0 4px 4px; font-family:var(--font-display); font-weight:700; font-size:17px;' }, [`${levelLabel} Breakdown per Carrier`]));
     carrierKeys.forEach(carrier => {
-      const carrierRows = filtered.filter(r => r.carrier === carrier).map(r => Object.assign({}, r, { issueType: issueTypeKey(r) }));
-      const cMatrix = buildWeekGroupMatrix(carrierRows, 'issueType', weeks, markets);
+      const carrierAllRows = filtered.filter(r => r.carrier === carrier);
+      const carrierDrillRows = withBlankGroupLabel(applyGenericDrillFilter(carrierAllRows, fs.drillPath), level);
+      const cMatrix = buildWeekGroupMatrix(carrierDrillRows, level, weeks, markets);
       const cKeys = orderGroupsByImpact(cMatrix, weeks);
-      const carrierErrorCount = carrierRows.length;
-      const carrierComp = carrierRows.reduce((s, r) => s + r.compensation, 0);
+      const carrierErrorCount = carrierAllRows.length;
+      const carrierComp = carrierAllRows.reduce((s, r) => s + r.compensation, 0);
 
       const card = el('div', { class: 'card' }, [
         el('div', { class: 'card-header' }, [
@@ -701,10 +712,11 @@ function PageLogistics(container, fs) {
         ]),
       ]);
       card.appendChild(PivotTable({
-        rowLabel: 'Issue Type',
+        rowLabel: levelLabel,
         weeks,
         rows: cKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = cMatrix[k][w].errorPct; return acc; }, {}) })),
         cellFormatter: (v) => ({ display: fmtPct(v), cls: '' }),
+        onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
         totalsRow: {
           cells: weeks.reduce((acc, w) => { acc[w] = cKeys.reduce((s, k) => s + cMatrix[k][w].errorPct, 0); return acc; }, {}),
           cellFormatter: (v) => ({ display: fmtPct(v) }),
