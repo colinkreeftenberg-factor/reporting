@@ -190,10 +190,19 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
         return { display: fmtPct(v), cls: (rt === null || rt === undefined) ? '' : (v > rt ? 'cell-pct-bad' : 'cell-pct-good') };
       },
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
+      totalsRow: {
+        cells: weeks.reduce((acc, w) => {
+          const totalErrors = groupKeys.reduce((s, k) => s + cellOrZero(matrix, k, w).errorCount, 0);
+          const totalPct = groupKeys.reduce((s, k) => s + cellOrZero(matrix, k, w).errorPct, 0);
+          acc[w] = breakdownMode === 'pct' ? totalPct : totalErrors;
+          return acc;
+        }, {}),
+        cellFormatter: (v) => breakdownMode === 'absolute' ? { display: fmtInt(v) } : { display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : '' },
+      },
     }));
     container.appendChild(breakdownCard);
 
-    // ---- Table 2: Compensation per week per group, with Total/Per-Box toggle ----
+    // ---- Table 2: Compensation per week per group, with Total/Per-Box/Per-Error toggle ----
     const compCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
         el('div', {}, [el('div', { class: 'card-title' }, ['Compensation per Week']), el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in' : ''])]),
@@ -201,16 +210,32 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
           return el('div', { class: 'toggle-pill' }, [
             el('button', { class: compensationMode === 'total' ? 'active' : '', onclick: () => { compensationMode = 'total'; render(); } }, ['Total']),
             el('button', { class: compensationMode === 'perbox' ? 'active' : '', onclick: () => { compensationMode = 'perbox'; render(); } }, ['Per Box']),
+            el('button', { class: compensationMode === 'pererror' ? 'active' : '', onclick: () => { compensationMode = 'pererror'; render(); } }, ['Per Error']),
           ]);
         })(),
       ]),
     ]);
+    function compValueFor(c) {
+      if (compensationMode === 'total') return c.compensationTotal;
+      if (compensationMode === 'perbox') return c.compPerBox;
+      return c.errorCount > 0 ? c.compensationTotal / c.errorCount : 0;
+    }
     compCard.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
-      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { const c = cellOrZero(matrix, k, w); acc[w] = compensationMode === 'total' ? c.compensationTotal : c.compPerBox; return acc; }, {}) })),
+      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = compValueFor(cellOrZero(matrix, k, w)); return acc; }, {}) })),
       cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v), cls: '' }),
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
+      totalsRow: {
+        cells: weeks.reduce((acc, w) => {
+          const totalComp = groupKeys.reduce((s, k) => s + cellOrZero(matrix, k, w).compensationTotal, 0);
+          const totalErrors = groupKeys.reduce((s, k) => s + cellOrZero(matrix, k, w).errorCount, 0);
+          const boxes = DataStore.boxCount(markets, [w]);
+          acc[w] = compensationMode === 'total' ? totalComp : compensationMode === 'perbox' ? (boxes > 0 ? totalComp / boxes : 0) : (totalErrors > 0 ? totalComp / totalErrors : 0);
+          return acc;
+        }, {}),
+        cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v) }),
+      },
     }));
     container.appendChild(compCard);
   }
@@ -424,6 +449,7 @@ function PageDataCheck(container, fs) {
 function PageCategoryDrill(container, fs) {
   const allRows = DataStore.rawRows;
   let breakdownMode = 'pct'; // 'pct' | 'absolute'
+  let compensationMode = 'total'; // 'total' | 'perbox' | 'pererror'
 
   function render() { preserveScroll(renderInner); }
 
@@ -489,17 +515,46 @@ function PageCategoryDrill(container, fs) {
       weeks,
       rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = breakdownMode === 'pct' ? matrix[k][w].errorPct : matrix[k][w].errorCount; return acc; }, {}) })),
       cellFormatter: (v) => breakdownMode === 'pct' ? { display: fmtPct(v), cls: '' } : { display: fmtInt(v), cls: '' },
+      totalsRow: {
+        cells: weeks.reduce((acc, w) => {
+          acc[w] = groupKeys.reduce((s, k) => s + (breakdownMode === 'pct' ? matrix[k][w].errorPct : matrix[k][w].errorCount), 0);
+          return acc;
+        }, {}),
+        cellFormatter: (v) => breakdownMode === 'pct' ? { display: fmtPct(v) } : { display: fmtInt(v) },
+      },
     }));
     container.appendChild(breakdownCard);
 
     const compCard = el('div', { class: 'card' }, [
-      el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, [`Compensation per Week by ${levelLabel}`])]),
+      el('div', { class: 'card-header' }, [
+        el('div', { class: 'card-title' }, [`Compensation per Week by ${levelLabel}`]),
+        el('div', { class: 'toggle-pill' }, [
+          el('button', { class: compensationMode === 'total' ? 'active' : '', onclick: () => { compensationMode = 'total'; render(); } }, ['Total']),
+          el('button', { class: compensationMode === 'perbox' ? 'active' : '', onclick: () => { compensationMode = 'perbox'; render(); } }, ['Per Box']),
+          el('button', { class: compensationMode === 'pererror' ? 'active' : '', onclick: () => { compensationMode = 'pererror'; render(); } }, ['Per Error']),
+        ]),
+      ]),
     ]);
+    function catCompValueFor(c) {
+      if (compensationMode === 'total') return c.compensationTotal;
+      if (compensationMode === 'perbox') return c.compPerBox;
+      return c.errorCount > 0 ? c.compensationTotal / c.errorCount : 0;
+    }
     compCard.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
-      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = matrix[k][w].compensationTotal; return acc; }, {}) })),
-      cellFormatter: (v) => ({ display: fmtEur(v), cls: '' }),
+      rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = catCompValueFor(matrix[k][w]); return acc; }, {}) })),
+      cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v), cls: '' }),
+      totalsRow: {
+        cells: weeks.reduce((acc, w) => {
+          const totalComp = groupKeys.reduce((s, k) => s + matrix[k][w].compensationTotal, 0);
+          const totalErrors = groupKeys.reduce((s, k) => s + matrix[k][w].errorCount, 0);
+          const boxes = DataStore.boxCount(markets, [w]);
+          acc[w] = compensationMode === 'total' ? totalComp : compensationMode === 'perbox' ? (boxes > 0 ? totalComp / boxes : 0) : (totalErrors > 0 ? totalComp / totalErrors : 0);
+          return acc;
+        }, {}),
+        cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v) }),
+      },
     }));
     container.appendChild(compCard);
 
@@ -531,6 +586,193 @@ function PageCategoryDrill(container, fs) {
       rows: grouped,
     }));
     container.appendChild(tableCard);
+  }
+  render();
+}
+
+// ---- Page: Logistics ------------------------------------------------------------
+
+function PageLogistics(container, fs) {
+  const allRows = DataStore.logisticsRows;
+  let compensationMode = 'total'; // 'total' | 'perbox' | 'pererror'
+  let statusMode = 'pct'; // 'pct' | 'absolute'
+
+  function render() { preserveScroll(renderInner); }
+
+  function renderInner() {
+    container.innerHTML = '';
+    setPageHeader('Logistics', 'Delivery and courier errors — same targets and business logic as the rest of the dashboard');
+
+    if (!allRows.length) {
+      container.appendChild(el('div', { class: 'config-banner' }, [
+        el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['Logistics data not connected']),
+        'This page reads from a third CSV feed. Make sure CONFIG.LOGISTICS_CSV_URL is set at the top of index.html and points to the published Logistics tab.',
+      ]));
+      return;
+    }
+
+    container.appendChild(WeekRangePicker(fs, render));
+    container.appendChild(MarketPillRow(fs, render));
+
+    const spec = [
+      { key: 'markets', label: 'Country', type: 'multiselect', exclusiveValue: 'FA-EU', options: optionsFor(MARKET_FILTER_OPTIONS) },
+      { key: 'errorSubcategory', label: 'Subcategory', type: 'multiselect', options: optionsFor(uniqueSorted(allRows, 'error_subcategory')) },
+      { key: 'complaint', label: 'Complaint', type: 'multiselect', options: optionsFor(uniqueSorted(allRows, 'complaint')) },
+      { key: 'carrier', label: 'Carrier', type: 'multiselect', options: optionsFor(uniqueSorted(allRows, 'carrier')) },
+      { key: 'sourceType', label: '', type: 'toggle3', options: [
+        { value: 'all', label: 'All' }, { value: 'agent', label: 'Agent/Cert' }, { value: 'bulk', label: 'Bulk' },
+      ] },
+    ];
+    container.appendChild(FilterBar(fs, spec, render));
+
+    const filter = { weeks: fs.state.weeks, markets: fs.state.markets, errorSubcategory: fs.state.errorSubcategory, complaint: fs.state.complaint, carrier: fs.state.carrier, sourceType: fs.state.sourceType };
+    const filtered = filterRows(allRows, filter);
+    const weeks = fs.effectiveWeeks();
+    const markets = fs.effectiveMarkets();
+    const agg = aggregate(filtered, weeks, markets);
+    const target = logisticsTarget(markets, weeks);
+
+    container.appendChild(kpiRowFor(agg));
+
+    if (!weeks.length || !filtered.length) {
+      container.appendChild(el('div', { class: 'card' }, [el('div', { class: 'empty-state' }, [el('div', { class: 'icon' }, ['—']), 'No rows match the current filters.'])]));
+      return;
+    }
+
+    // ---- Section 1: stacked weekly chart by issue type (subcategory → complaint → detail) ----
+    const rowsWithIssue = filtered.map(r => Object.assign({}, r, { issueType: issueTypeKey(r) }));
+    const issueMatrix = buildWeekGroupMatrix(rowsWithIssue, 'issueType', weeks, markets);
+    const issueKeys = orderGroupsByImpact(issueMatrix, weeks);
+
+    const issuePctByWeek = {};
+    issueKeys.forEach(k => { issuePctByWeek[k] = {}; weeks.forEach(w => { issuePctByWeek[k][w] = issueMatrix[k][w].errorPct; }); });
+
+    const chart1Card = el('div', { class: 'card' }, [
+      el('div', { class: 'card-header' }, [
+        el('div', {}, [el('div', { class: 'card-title' }, ['Weekly Error % by Issue Type']), el('div', { class: 'card-desc' }, ['Stacked by subcategory → complaint → detail · shaded band = Last Mile target · blank detail (was "-1") shown as "(uncategorized)"'])]),
+      ]),
+      el('div', { class: 'chart-wrap' }, [el('canvas')]),
+    ]);
+    container.appendChild(chart1Card);
+    renderStackedWeeklyChart(chart1Card.querySelector('canvas'), weeks, issueKeys, issuePctByWeek, target);
+
+    // ---- Section 2: Error % table by issue type, with Totals row ----
+    const table1Card = el('div', { class: 'card' }, [
+      el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, ['Error % per Week by Issue Type']), el('div', { class: 'card-desc' }, ['Red = above the Last Mile target'])]),
+    ]);
+    table1Card.appendChild(PivotTable({
+      rowLabel: 'Issue Type',
+      weeks,
+      rows: issueKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMatrix[k][w].errorPct; return acc; }, {}) })),
+      cellFormatter: (v) => ({ display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : 'cell-pct-good' }),
+      totalsRow: {
+        cells: weeks.reduce((acc, w) => { acc[w] = issueKeys.reduce((s, k) => s + issueMatrix[k][w].errorPct, 0); return acc; }, {}),
+        cellFormatter: (v) => ({ display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : '' }),
+      },
+    }));
+    container.appendChild(table1Card);
+
+    // ---- Section 3: Error % per carrier per week (line chart) ----
+    const carrierMatrix = buildWeekGroupMatrix(filtered, 'carrier', weeks, markets);
+    const carrierKeys = orderGroupsByImpact(carrierMatrix, weeks);
+    const carrierSeries = carrierKeys.map(k => ({ label: k, dataByWeek: Object.fromEntries(weeks.map(w => [w, carrierMatrix[k][w].errorPct])) }));
+
+    const chart2Card = el('div', { class: 'card' }, [
+      el('div', { class: 'card-header' }, [
+        el('div', {}, [el('div', { class: 'card-title' }, ['Error % per Carrier per Week']), el('div', { class: 'card-desc' }, ['One line per carrier · shaded band = Last Mile target · rows with no carrier assigned are excluded from this and the per-carrier sections below, but still count in the KPIs above'])]),
+      ]),
+      el('div', { class: 'chart-wrap' }, [el('canvas')]),
+    ]);
+    container.appendChild(chart2Card);
+    renderMultiLineChart(chart2Card.querySelector('canvas'), weeks, carrierSeries, { targetPct: target });
+
+    // ---- Section 4: per-carrier issue-type breakdown cards ----
+    container.appendChild(el('div', { style: 'margin:28px 0 4px 4px; font-family:var(--font-display); font-weight:700; font-size:17px;' }, ['Issue Type Breakdown per Carrier']));
+    carrierKeys.forEach(carrier => {
+      const carrierRows = filtered.filter(r => r.carrier === carrier).map(r => Object.assign({}, r, { issueType: issueTypeKey(r) }));
+      const cMatrix = buildWeekGroupMatrix(carrierRows, 'issueType', weeks, markets);
+      const cKeys = orderGroupsByImpact(cMatrix, weeks);
+      const carrierErrorCount = carrierRows.length;
+      const carrierComp = carrierRows.reduce((s, r) => s + r.compensation, 0);
+
+      const card = el('div', { class: 'card' }, [
+        el('div', { class: 'card-header' }, [
+          el('div', { class: 'card-title' }, [`${carrier}  |  ${fmtInt(carrierErrorCount)} errors  |  ${fmtEur(carrierComp)} compensation`]),
+        ]),
+      ]);
+      card.appendChild(PivotTable({
+        rowLabel: 'Issue Type',
+        weeks,
+        rows: cKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = cMatrix[k][w].errorPct; return acc; }, {}) })),
+        cellFormatter: (v) => ({ display: fmtPct(v), cls: '' }),
+        totalsRow: {
+          cells: weeks.reduce((acc, w) => { acc[w] = cKeys.reduce((s, k) => s + cMatrix[k][w].errorPct, 0); return acc; }, {}),
+          cellFormatter: (v) => ({ display: fmtPct(v) }),
+        },
+      }));
+      container.appendChild(card);
+    });
+
+    // ---- Section 5: delivery status composition chart, Percentage/Absolute toggle ----
+    const statusMatrix = buildWeekGroupMatrix(filtered, 'delivery_status', weeks, markets);
+    const statusKeys = orderGroupsByImpact(statusMatrix, weeks);
+    const statusTotalsByWeek = {};
+    weeks.forEach(w => { statusTotalsByWeek[w] = statusKeys.reduce((s, k) => s + statusMatrix[k][w].errorCount, 0); });
+    const statusValueByWeek = {};
+    statusKeys.forEach(k => {
+      statusValueByWeek[k] = {};
+      weeks.forEach(w => {
+        const count = statusMatrix[k][w].errorCount;
+        statusValueByWeek[k][w] = statusMode === 'pct' ? (statusTotalsByWeek[w] > 0 ? (count / statusTotalsByWeek[w]) * 100 : 0) : count;
+      });
+    });
+
+    const chart3Card = el('div', { class: 'card' }, [
+      el('div', { class: 'card-header' }, [
+        el('div', {}, [el('div', { class: 'card-title' }, ['Delivery Status by Week']), el('div', { class: 'card-desc' }, [statusMode === 'pct' ? '% share of that week\'s logistics errors' : 'Raw error counts'])]),
+        el('div', { class: 'toggle-pill' }, [
+          el('button', { class: statusMode === 'pct' ? 'active' : '', onclick: () => { statusMode = 'pct'; render(); } }, ['Percentage']),
+          el('button', { class: statusMode === 'absolute' ? 'active' : '', onclick: () => { statusMode = 'absolute'; render(); } }, ['Absolute']),
+        ]),
+      ]),
+      el('div', { class: 'chart-wrap' }, [el('canvas')]),
+    ]);
+    container.appendChild(chart3Card);
+    renderCompositionChart(chart3Card.querySelector('canvas'), weeks, statusKeys, statusValueByWeek, statusMode);
+
+    // ---- Section 6: compensation per week per carrier, Total/Per-Box/Per-Error toggle ----
+    const compCard = el('div', { class: 'card' }, [
+      el('div', { class: 'card-header' }, [
+        el('div', { class: 'card-title' }, ['Compensation per Week per Carrier']),
+        el('div', { class: 'toggle-pill' }, [
+          el('button', { class: compensationMode === 'total' ? 'active' : '', onclick: () => { compensationMode = 'total'; render(); } }, ['Total']),
+          el('button', { class: compensationMode === 'perbox' ? 'active' : '', onclick: () => { compensationMode = 'perbox'; render(); } }, ['Per Box']),
+          el('button', { class: compensationMode === 'pererror' ? 'active' : '', onclick: () => { compensationMode = 'pererror'; render(); } }, ['Per Error']),
+        ]),
+      ]),
+    ]);
+    function compValueFor(c) {
+      if (compensationMode === 'total') return c.compensationTotal;
+      if (compensationMode === 'perbox') return c.compPerBox;
+      return c.errorCount > 0 ? c.compensationTotal / c.errorCount : 0;
+    }
+    compCard.appendChild(PivotTable({
+      rowLabel: 'Carrier',
+      weeks,
+      rows: carrierKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = compValueFor(carrierMatrix[k][w]); return acc; }, {}) })),
+      cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v), cls: '' }),
+      totalsRow: {
+        cells: weeks.reduce((acc, w) => {
+          const totalComp = carrierKeys.reduce((s, k) => s + carrierMatrix[k][w].compensationTotal, 0);
+          const totalErrors = carrierKeys.reduce((s, k) => s + carrierMatrix[k][w].errorCount, 0);
+          const boxes = DataStore.boxCount(markets, [w]);
+          acc[w] = compensationMode === 'total' ? totalComp : compensationMode === 'perbox' ? (boxes > 0 ? totalComp / boxes : 0) : (totalErrors > 0 ? totalComp / totalErrors : 0);
+          return acc;
+        }, {}),
+        cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v) }),
+      },
+    }));
+    container.appendChild(compCard);
   }
   render();
 }

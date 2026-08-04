@@ -8,6 +8,7 @@ const PAGES = [
   { id: 'recipe', label: 'Recipe Deep Dive', render: PageRecipe },
   { id: 'all', label: 'All Errors', render: PageAll },
   { id: 'category', label: 'Error Category Drill Down', render: PageCategoryDrill },
+  { id: 'logistics', label: 'Logistics', render: PageLogistics },
   { id: 'datacheck', label: 'Data Check', render: PageDataCheck },
 ];
 
@@ -105,7 +106,7 @@ async function init() {
   }
 
   statusDot.className = 'status-dot ok';
-  statusText.textContent = `${DataStore.rawRows.length.toLocaleString()} rows · ${DataStore.weeks.length} weeks`;
+  statusText.textContent = `${DataStore.rawRows.length.toLocaleString()} rows · ${DataStore.weeks.length} weeks` + (DataStore.logisticsRows.length ? ` · ${DataStore.logisticsRows.length.toLocaleString()} logistics rows` : '');
   renderActivePage();
 }
 

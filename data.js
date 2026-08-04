@@ -51,6 +51,10 @@ const TARGETS = {
 // would otherwise silently zero out a market's box count.
 const GROWTHMODEL_MARKET_CODES = { 'FA-NL': 'nl', 'FA-BE': 'be', 'FA-SE': 'se', 'FA-DK': 'dk', 'FA-DE': 'de' };
 
+// Logistics uses the same per-market targets as the "Last Mile" team, since
+// that's the existing target set for logistics/delivery error rates per market.
+const LOGISTICS_TARGET_TEAM = 'Last Mile';
+
 // ---- Utilities -------------------------------------------------------------
 
 function toNumber(v) {
@@ -94,6 +98,7 @@ function isAgentRow(row) {
 
 const DataStore = {
   rawRows: [],          // normalized EU sheet rows
+  logisticsRows: [],     // normalized Logistics sheet rows (separate source, has carrier)
   growthModel: {},       // { normalizedWeek: { 'FA-NL': n, ... , 'FA-EU': n } }
   weeks: [],             // sorted, oldest-excluded, normalized week list
   loaded: false,
@@ -105,12 +110,13 @@ const DataStore = {
       return;
     }
     try {
-      const [euCsv, gmCsv] = await Promise.all([
-        fetchCsv(CONFIG.EU_CSV_URL),
-        fetchCsv(CONFIG.GROWTHMODEL_CSV_URL),
-      ]);
+      const fetches = [fetchCsv(CONFIG.EU_CSV_URL), fetchCsv(CONFIG.GROWTHMODEL_CSV_URL)];
+      const hasLogistics = CONFIG.LOGISTICS_CSV_URL && !CONFIG.LOGISTICS_CSV_URL.startsWith('PASTE_');
+      if (hasLogistics) fetches.push(fetchCsv(CONFIG.LOGISTICS_CSV_URL));
+      const [euCsv, gmCsv, logCsv] = await Promise.all(fetches);
       this._processEu(euCsv);
       this._processGrowthModel(gmCsv);
+      if (hasLogistics) this._processLogistics(logCsv);
       this._computeWeeks();
       this.loaded = true;
     } catch (e) {
@@ -143,6 +149,36 @@ const DataStore = {
         delivery_status: r.delivery_status || '',
       }));
     this.rawRows.forEach(r => { r.isAgent = isAgentRow(r); });
+  },
+
+  // Values of "-1" or literal "NaN" mean "no detail" in this sheet — normalized
+  // to '' so every page can treat blank consistently instead of showing "-1".
+  _blankAware(v) {
+    const s = (v === null || v === undefined) ? '' : String(v).trim();
+    return (s === '-1' || s.toLowerCase() === 'nan') ? '' : s;
+  },
+
+  _processLogistics(parsed) {
+    this.logisticsRows = parsed.data
+      .filter(r => r.created_at || r.week)
+      .map(r => ({
+        created_at: r.created_at,
+        week: normalizeWeek(r.week),
+        country: (r.country || '').trim(),
+        agent: r.agent,
+        custId: r.CustID,
+        boxId: r.BoxID,
+        error_subcategory: this._blankAware(r.error_subcategory),
+        complaint: this._blankAware(r.complaint),
+        mapped_detail_1: this._blankAware(r.mapped_detail_1),
+        mapped_detail_2: this._blankAware(r.mapped_detail_2),
+        compensation: toNumber(r.compensation_amount_eur),
+        override_reason: r.override_reason || '',
+        comment: r.comment || '',
+        delivery_status: this._blankAware(r.delivery_status),
+        carrier: this._blankAware(r.carrier),
+      }));
+    this.logisticsRows.forEach(r => { r.isAgent = isAgentRow(r); });
   },
 
   _processGrowthModel(parsed) {
@@ -229,6 +265,8 @@ function filterRows(rows, f) {
     if (f.errorSubcategory && f.errorSubcategory.length && !f.errorSubcategory.includes(r.error_subcategory)) return false;
     if (f.complaint && f.complaint.length && !f.complaint.includes(r.complaint)) return false;
     if (f.recipe && f.recipe.length && !f.recipe.includes(r.recipe_title)) return false;
+    if (f.carrier && f.carrier.length && !f.carrier.includes(r.carrier)) return false;
+    if (f.deliveryStatus && f.deliveryStatus.length && !f.deliveryStatus.includes(r.delivery_status)) return false;
     if (f.sourceType === 'agent' && !r.isAgent) return false;
     if (f.sourceType === 'bulk' && r.isAgent) return false;
     return true;
@@ -321,9 +359,33 @@ function blendedTarget(teams, markets, weeks) {
   return anyTeamHasTarget ? blended : null;
 }
 
+// Composite "issue type" key combining subcategory/complaint/detail into one
+// grouping dimension, since the Logistics sheet doesn't have team/category
+// levels to drill through — blank detail values display as "—" not "-1".
+function issueTypeKey(r) {
+  const parts = [r.error_subcategory, r.complaint, r.mapped_detail_1].filter(Boolean);
+  return parts.length ? parts.join(' → ') : '(uncategorized)';
+}
+
+// Sums a matrix's values for a given metric across every group, per week —
+// the basis for "Totals" rows in pivot tables.
+function totalsAcrossGroups(matrix, groupKeys, weeks, metric) {
+  const totals = {};
+  weeks.forEach(w => {
+    totals[w] = groupKeys.reduce((s, k) => s + ((matrix[k] && matrix[k][w]) ? matrix[k][w][metric] : 0), 0);
+  });
+  return totals;
+}
+
 // Target for exactly ONE team — this is what each row in a per-team
 // breakdown table must be compared against, never the combined/summed
 // target of every team stacked together.
 function teamTarget(team, markets, weeks) {
   return blendedTarget([team], markets, weeks);
+}
+
+// Blended "Last Mile" target — reused as the Logistics per-market target,
+// per the existing target set already defined for logistics/delivery errors.
+function logisticsTarget(markets, weeks) {
+  return blendedTarget([LOGISTICS_TARGET_TEAM], markets, weeks);
 }

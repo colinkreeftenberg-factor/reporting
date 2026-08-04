@@ -347,6 +347,8 @@ table.data-table tbody td{padding:11px 14px; border-bottom:1px solid var(--borde
 table.data-table tbody tr{cursor:pointer; transition:background .12s ease;}
 table.data-table tbody tr:hover{background:var(--surface-sunken);}
 table.data-table tbody tr:nth-child(even){background:rgba(20,20,20,0.012);}
+table.data-table tbody tr.pivot-totals-row{background:var(--surface-sunken); font-weight:700; border-top:2px solid var(--carbon);}
+table.data-table tbody tr.pivot-totals-row td{color:var(--text-primary);}
 .cell-num{text-align:right; font-variant-numeric:tabular-nums;}
 .cell-pct-bad{color:var(--cherry); font-weight:700; background:rgba(255,88,93,0.10); border-radius:8px;}
 .cell-pct-good{color:var(--basil); font-weight:700; background:rgba(117,194,109,0.12); border-radius:8px;}
@@ -437,6 +439,7 @@ table.data-table tbody tr:nth-child(even){background:rgba(20,20,20,0.012);}
 const CONFIG = {
   EU_CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQjsK3bd0WSByutZJYtUSm82bP-nptn8CHpe49TXlqjNgZ3TD-d0tAKTy383to8MR3N5tg0m9qqyp0h/pub?gid=0&single=true&output=csv",
   GROWTHMODEL_CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQjsK3bd0WSByutZJYtUSm82bP-nptn8CHpe49TXlqjNgZ3TD-d0tAKTy383to8MR3N5tg0m9qqyp0h/pub?gid=450735862&single=true&output=csv",
+  LOGISTICS_CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQjsK3bd0WSByutZJYtUSm82bP-nptn8CHpe49TXlqjNgZ3TD-d0tAKTy383to8MR3N5tg0m9qqyp0h/pub?gid=1722615131&single=true&output=csv",
 };
 </script>
 <script src="./data.js"></script>

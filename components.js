@@ -511,10 +511,90 @@ function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, ta
   });
 }
 
+// ---- Multi-line chart (e.g. ER% per carrier per week) --------------------------
+
+// series: [{ label, dataByWeek: {week: value} }]
+function renderMultiLineChart(canvas, weeks, series, opts = {}) {
+  const datasets = series.map((s, i) => ({
+    label: s.label,
+    data: weeks.map(w => s.dataByWeek[w] || 0),
+    borderColor: colorForIndex(i),
+    backgroundColor: withAlpha(colorForIndex(i), 0.08),
+    borderWidth: 2.5,
+    pointRadius: 0,
+    pointHoverRadius: 5,
+    pointHoverBackgroundColor: colorForIndex(i),
+    tension: 0.3,
+    fill: false,
+  }));
+
+  return new Chart(canvas, {
+    type: 'line',
+    data: { labels: weeks, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 500 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'bottom', labels: { boxWidth: 12, boxHeight: 12, padding: 14, font: { family: 'IBM Plex Sans', size: 11.5 } } },
+        tooltip: {
+          backgroundColor: '#141414', padding: 12, cornerRadius: 10,
+          callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)}%` },
+        },
+        targetBandPlugin: { value: opts.targetPct },
+      },
+      scales: {
+        y: { beginAtZero: true, ticks: { callback: v => v + '%' }, grid: { color: 'rgba(20,20,20,0.06)' } },
+        x: { grid: { display: false } },
+      },
+    },
+    plugins: [targetBandPlugin],
+  });
+}
+
+// ---- Composition/absolute stacked chart (e.g. delivery status per week) --------
+
+// groupValueByWeek: { group: { week: value } } — values already in the units
+// matching `mode` ('pct' = composition % of that week's total, already computed
+// by the caller; 'absolute' = raw counts). This chart doesn't apply a target
+// band or a "% of boxes" semantic — it's a composition breakdown, not an error rate.
+function renderCompositionChart(canvas, weeks, groups, groupValueByWeek, mode) {
+  const datasets = groups.map((g, i) => ({
+    label: g || '(blank)',
+    data: weeks.map(w => groupValueByWeek[g][w] || 0),
+    backgroundColor: colorForIndex(i),
+    stack: 'status',
+    borderRadius: 4,
+    maxBarThickness: 64,
+  }));
+
+  return new Chart(canvas, {
+    type: 'bar',
+    data: { labels: weeks, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 500 },
+      plugins: {
+        legend: { display: true, position: 'bottom', labels: { boxWidth: 12, boxHeight: 12, padding: 14, font: { family: 'IBM Plex Sans', size: 11.5 } } },
+        tooltip: {
+          backgroundColor: '#141414', padding: 12, cornerRadius: 10,
+          callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${mode === 'pct' ? ctx.raw.toFixed(2) + '%' : fmtInt(ctx.raw)}` },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, beginAtZero: true, ticks: { callback: v => mode === 'pct' ? v + '%' : v }, grid: { color: 'rgba(20,20,20,0.06)' } },
+      },
+    },
+  });
+}
+
 // ---- Per-week pivot table (rows = group, columns = weeks) ----------------------
 
 // rows: [{ key, cells: { week: number } }]; cellFormatter(value) -> {display, cls}
-function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick }) {
+function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRow }) {
   const wrap = el('div', { class: 'table-scroll' });
   const table = el('table', { class: 'data-table' });
   const thead = el('thead');
@@ -537,6 +617,16 @@ function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick }) {
     });
     tbody.appendChild(tr);
   });
+  if (totalsRow) {
+    const tr = el('tr', { class: 'pivot-totals-row' });
+    tr.appendChild(el('td', {}, ['Total']));
+    weeks.forEach(w => {
+      const val = totalsRow.cells[w];
+      const { display } = (totalsRow.cellFormatter || cellFormatter)(val, w, '__total__');
+      tr.appendChild(el('td', { class: 'cell-num' }, [display]));
+    });
+    tbody.appendChild(tr);
+  }
   table.appendChild(tbody);
   wrap.appendChild(table);
   return wrap;

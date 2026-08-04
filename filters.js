@@ -14,6 +14,8 @@ class FilterState {
       errorSubcategory: [],
       complaint: [],
       recipe: [],
+      carrier: [],
+      deliveryStatus: [],
       sourceType: 'all', // 'all' | 'agent' | 'bulk'
     }, defaults || {});
     this.onChange = onChange || (() => {});
@@ -46,6 +48,8 @@ class FilterState {
     this.state.errorSubcategory = [];
     this.state.complaint = [];
     this.state.recipe = [];
+    this.state.carrier = [];
+    this.state.deliveryStatus = [];
     this.state.sourceType = 'all';
     this.drillPath = [];
     this.onChange();
