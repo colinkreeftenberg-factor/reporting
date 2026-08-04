@@ -99,6 +99,7 @@ function isAgentRow(row) {
 const DataStore = {
   rawRows: [],          // normalized EU sheet rows
   logisticsRows: [],     // normalized Logistics sheet rows (separate source, has carrier)
+  logisticsWeeks: [],    // separate, wider week list than DataStore.weeks (Logistics has more history)
   growthModel: {},       // { normalizedWeek: { 'FA-NL': n, ... , 'FA-EU': n } }
   weeks: [],             // sorted, oldest-excluded, normalized week list
   loaded: false,
@@ -118,6 +119,7 @@ const DataStore = {
       this._processGrowthModel(gmCsv);
       if (hasLogistics) this._processLogistics(logCsv);
       this._computeWeeks();
+      if (hasLogistics) this._computeLogisticsWeeks();
       this.loaded = true;
     } catch (e) {
       console.error(e);
@@ -222,6 +224,15 @@ const DataStore = {
     const sorted = Array.from(set).sort((a, b) => weekSortKey(a) - weekSortKey(b));
     // Exclude the oldest week — often incomplete due to source row limits.
     this.weeks = sorted.slice(1);
+  },
+
+  // The Logistics sheet has its own, much larger history than the EU sheet —
+  // using DataStore.weeks (EU-sheet-derived) would silently hide those older
+  // weeks even though real Logistics data exists for them.
+  _computeLogisticsWeeks() {
+    const set = new Set(this.logisticsRows.map(r => r.week).filter(Boolean));
+    const sorted = Array.from(set).sort((a, b) => weekSortKey(a) - weekSortKey(b));
+    this.logisticsWeeks = sorted.slice(1); // same "exclude oldest" convention as the EU sheet
   },
 
   // Box count for a set of FA-market codes across a set of weeks.

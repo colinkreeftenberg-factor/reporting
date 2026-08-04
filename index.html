@@ -297,6 +297,31 @@ button{font-family:inherit;}
 }
 .week-range-quick button:hover{border-color:var(--text-tertiary); color:var(--text-primary);}
 
+/* ---------- Floating reset filters button ---------- */
+.floating-reset-btn{
+  position:fixed; top:20px; right:28px; z-index:70;
+  display:flex; align-items:center; gap:7px;
+  background:var(--carbon); color:var(--saffron); border:none;
+  padding:11px 18px; border-radius:999px; font-family:var(--font-body); font-weight:700; font-size:13.5px;
+  cursor:pointer; box-shadow:var(--shadow-hover); transition:transform .15s ease;
+}
+.floating-reset-btn:hover{transform:translateY(-1px);}
+.floating-reset-btn .reset-icon{font-size:15px;}
+@media(max-width:900px){
+  .floating-reset-btn{top:auto; bottom:20px; right:20px; padding:12px 16px;}
+}
+
+/* ---------- Carrier group (visually ties per-carrier cards together) ---------- */
+.carrier-group{
+  border:2px solid var(--border); border-radius:var(--radius-lg); background:var(--surface-sunken);
+  padding:20px; margin-bottom:24px;
+}
+.carrier-group-title{
+  font-family:var(--font-display); font-weight:700; font-size:16px; margin-bottom:14px; padding-left:2px;
+}
+.carrier-group .card{margin-bottom:16px;}
+.carrier-group .card:last-child{margin-bottom:0;}
+
 /* ---------- Market pill row ---------- */
 .market-pill-row{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
 .market-pill{
@@ -429,6 +454,10 @@ table.data-table tbody tr.pivot-totals-row td{color:var(--text-primary);}
     </div>
     <div id="pageContent"></div>
   </main>
+
+  <button id="resetFiltersBtn" class="floating-reset-btn" title="Reset all filters except country and weeks">
+    <span class="reset-icon">↺</span> Reset Filters
+  </button>
 </div>
 
 <script>

@@ -596,6 +596,7 @@ function PageLogistics(container, fs) {
   const allRows = DataStore.logisticsRows;
   let compensationMode = 'total'; // 'total' | 'perbox' | 'pererror'
   let statusMode = 'pct'; // 'pct' | 'absolute'
+  let issueMode = 'pct'; // 'pct' | 'absolute' — shared by the issue-type chart, table, and per-carrier cards
 
   function render() { preserveScroll(renderInner); }
 
@@ -651,33 +652,39 @@ function PageLogistics(container, fs) {
     const issueMatrix = buildWeekGroupMatrix(rowsForLevel, level, weeks, markets);
     const issueKeys = orderGroupsByImpact(issueMatrix, weeks);
 
-    container.appendChild(Breadcrumb('All Subcategories', fs, render));
+    container.appendChild(el('div', { style: 'display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;' }, [
+      Breadcrumb('All Subcategories', fs, render),
+      el('div', { class: 'toggle-pill' }, [
+        el('button', { class: issueMode === 'pct' ? 'active' : '', onclick: () => { issueMode = 'pct'; render(); } }, ['Error %']),
+        el('button', { class: issueMode === 'absolute' ? 'active' : '', onclick: () => { issueMode = 'absolute'; render(); } }, ['Absolute']),
+      ]),
+    ]));
 
     const issuePctByWeek = {};
-    issueKeys.forEach(k => { issuePctByWeek[k] = {}; weeks.forEach(w => { issuePctByWeek[k][w] = issueMatrix[k][w].errorPct; }); });
+    issueKeys.forEach(k => { issuePctByWeek[k] = {}; weeks.forEach(w => { issuePctByWeek[k][w] = issueMode === 'pct' ? issueMatrix[k][w].errorPct : issueMatrix[k][w].errorCount; }); });
 
     const chart1Card = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly Error % by ${levelLabel}`]), el('div', { class: 'card-desc' }, ['Shaded band = Last Mile target · click a row in the table below to drill in'])]),
+        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly ${issueMode === 'pct' ? 'Error %' : 'Absolute Errors'} by ${levelLabel}`]), el('div', { class: 'card-desc' }, [issueMode === 'pct' ? 'Shaded band = Last Mile target · click a row in the table below to drill in' : 'Raw error counts · click a row in the table below to drill in'])]),
       ]),
       el('div', { class: 'chart-wrap' }, [el('canvas')]),
     ]);
     container.appendChild(chart1Card);
-    renderStackedWeeklyChart(chart1Card.querySelector('canvas'), weeks, issueKeys, issuePctByWeek, target);
+    renderStackedWeeklyChart(chart1Card.querySelector('canvas'), weeks, issueKeys, issuePctByWeek, target, { mode: issueMode });
 
-    // ---- Section 2: Error % table by current drill level, with Totals row ----
+    // ---- Section 2: table by current drill level, with Totals row ----
     const table1Card = el('div', { class: 'card' }, [
-      el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, [`Error % per Week by ${levelLabel}`]), el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in · red = above the Last Mile target' : 'Red = above the Last Mile target'])]),
+      el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, [`${issueMode === 'pct' ? 'Error %' : 'Absolute Errors'} per Week by ${levelLabel}`]), el('div', { class: 'card-desc' }, [issueMode === 'pct' ? (canDrillFurther ? 'Click a row to drill in · red = above the Last Mile target' : 'Red = above the Last Mile target') : (canDrillFurther ? 'Click a row to drill in · raw counts, no target formatting' : 'Raw counts, no target formatting')])]),
     ]);
     table1Card.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
-      rows: issueKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMatrix[k][w].errorPct; return acc; }, {}) })),
-      cellFormatter: (v) => ({ display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : 'cell-pct-good' }),
+      rows: issueKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? issueMatrix[k][w].errorPct : issueMatrix[k][w].errorCount; return acc; }, {}) })),
+      cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v), cls: '' } : { display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : 'cell-pct-good' },
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
       totalsRow: {
-        cells: weeks.reduce((acc, w) => { acc[w] = issueKeys.reduce((s, k) => s + issueMatrix[k][w].errorPct, 0); return acc; }, {}),
-        cellFormatter: (v) => ({ display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : '' }),
+        cells: weeks.reduce((acc, w) => { acc[w] = issueKeys.reduce((s, k) => s + (issueMode === 'pct' ? issueMatrix[k][w].errorPct : issueMatrix[k][w].errorCount), 0); return acc; }, {}),
+        cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v) } : { display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : '' },
       },
     }));
     container.appendChild(table1Card);
@@ -696,8 +703,10 @@ function PageLogistics(container, fs) {
     container.appendChild(chart2Card);
     renderMultiLineChart(chart2Card.querySelector('canvas'), weeks, carrierSeries, { targetPct: target });
 
-    // ---- Section 4: per-carrier breakdown cards, same drill level as above ----
-    container.appendChild(el('div', { style: 'margin:28px 0 4px 4px; font-family:var(--font-display); font-weight:700; font-size:17px;' }, [`${levelLabel} Breakdown per Carrier`]));
+    // ---- Section 4: per-carrier breakdown cards, same drill level and toggle as above ----
+    const carrierGroup = el('div', { class: 'carrier-group' }, [
+      el('div', { class: 'carrier-group-title' }, [`${levelLabel} Breakdown per Carrier`]),
+    ]);
     carrierKeys.forEach(carrier => {
       const carrierAllRows = filtered.filter(r => r.carrier === carrier);
       const carrierDrillRows = withBlankGroupLabel(applyGenericDrillFilter(carrierAllRows, fs.drillPath), level);
@@ -714,16 +723,17 @@ function PageLogistics(container, fs) {
       card.appendChild(PivotTable({
         rowLabel: levelLabel,
         weeks,
-        rows: cKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = cMatrix[k][w].errorPct; return acc; }, {}) })),
-        cellFormatter: (v) => ({ display: fmtPct(v), cls: '' }),
+        rows: cKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? cMatrix[k][w].errorPct : cMatrix[k][w].errorCount; return acc; }, {}) })),
+        cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v), cls: '' } : { display: fmtPct(v), cls: '' },
         onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
         totalsRow: {
-          cells: weeks.reduce((acc, w) => { acc[w] = cKeys.reduce((s, k) => s + cMatrix[k][w].errorPct, 0); return acc; }, {}),
-          cellFormatter: (v) => ({ display: fmtPct(v) }),
+          cells: weeks.reduce((acc, w) => { acc[w] = cKeys.reduce((s, k) => s + (issueMode === 'pct' ? cMatrix[k][w].errorPct : cMatrix[k][w].errorCount), 0); return acc; }, {}),
+          cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v) } : { display: fmtPct(v) },
         },
       }));
-      container.appendChild(card);
+      carrierGroup.appendChild(card);
     });
+    container.appendChild(carrierGroup);
 
     // ---- Section 5: delivery status composition chart, Percentage/Absolute toggle ----
     const statusMatrix = buildWeekGroupMatrix(filtered, 'delivery_status', weeks, markets);

@@ -21,6 +21,10 @@ class FilterState {
     this.onChange = onChange || (() => {});
     this.drillPath = []; // breadcrumb stack for drill-through, e.g. [{level:'team', value:'Packaging'}, ...]
     this.openFilterKey = null; // which dropdown filter panel (if any) is currently open
+    // Which canonical week list this page's slider/picker draws from. Null
+    // means "use DataStore.weeks" (the default) — Logistics overrides this
+    // to DataStore.logisticsWeeks, since that sheet has a longer history.
+    this.weeksList = null;
   }
 
   set(key, value) {
@@ -55,6 +59,22 @@ class FilterState {
     this.onChange();
   }
 
+  // For the floating "Reset filters" button — resets everything except the
+  // currently selected country and weeks, per instruction.
+  resetKeepCountryAndWeeks() {
+    this.state.teams = [];
+    this.state.errorCategory = [];
+    this.state.errorSubcategory = [];
+    this.state.complaint = [];
+    this.state.recipe = [];
+    this.state.carrier = [];
+    this.state.deliveryStatus = [];
+    this.state.sourceType = 'all';
+    this.drillPath = [];
+    this.openFilterKey = null;
+    this.onChange();
+  }
+
   pushDrill(level, value, label) {
     this.drillPath.push({ level, value, label: label || value });
     this.onChange();
@@ -72,7 +92,8 @@ class FilterState {
 
   // Effective weeks used for aggregation (all-known weeks if none selected)
   effectiveWeeks() {
-    return this.state.weeks.length ? this.state.weeks : DataStore.weeks;
+    const list = this.weeksList || DataStore.weeks;
+    return this.state.weeks.length ? this.state.weeks : list;
   }
   effectiveMarkets() {
     if (!this.state.markets.length || this.state.markets.includes('FA-EU')) return ALL_MARKETS;

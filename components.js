@@ -350,7 +350,7 @@ function weeksToRange(selectedWeeks, allWeeks) {
 }
 
 function WeekRangePicker(fs, onAnyChange) {
-  const weeks = DataStore.weeks;
+  const weeks = fs.weeksList || DataStore.weeks;
   const n = weeks.length;
   let [startIdx, endIdx] = weeksToRange(fs.state.weeks, weeks);
 
@@ -422,6 +422,7 @@ const totalLabelPlugin = {
   afterDatasetsDraw(chart, args, pluginOpts) {
     const totals = pluginOpts && pluginOpts.totals;
     if (!totals) return;
+    const formatter = (pluginOpts && pluginOpts.formatter) || (v => v.toFixed(2) + '%');
     const meta = chart.getDatasetMeta(0);
     const ctx = chart.ctx;
     ctx.save();
@@ -432,7 +433,7 @@ const totalLabelPlugin = {
       const bar = meta.data[i];
       if (!bar) return;
       const yPix = chart.scales.y.getPixelForValue(total);
-      ctx.fillText(total.toFixed(2) + '%', bar.x, yPix - 8);
+      ctx.fillText(formatter(total), bar.x, yPix - 8);
     });
     ctx.restore();
   },
@@ -446,7 +447,8 @@ const totalLabelPlugin = {
 // fixedMax, if given, pins suggestedMax so only non-toggle filters (team, week,
 // market, category) can change the scale.
 function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, targetPct, opts = {}) {
-  const remainderByWeek = opts.remainderByWeek || null;
+  const mode = opts.mode || 'pct'; // 'pct' | 'absolute'
+  const remainderByWeek = mode === 'pct' ? (opts.remainderByWeek || null) : null;
   const datasets = [];
   groups.forEach((g, i) => {
     const color = colorForIndex(i);
@@ -474,6 +476,7 @@ function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, ta
   const selectedTotals = weeks.map(w => groups.reduce((s, g) => s + (groupErrorPctByWeek[g][w] || 0), 0));
   const fullTotals = weeks.map((w, i) => selectedTotals[i] + (remainderByWeek ? groups.reduce((s, g) => s + ((remainderByWeek[g] && remainderByWeek[g][w]) || 0), 0) : 0));
   const maxTotal = opts.fixedMax !== undefined ? opts.fixedMax : Math.max(...fullTotals, 0.01);
+  const fmtVal = (v) => mode === 'pct' ? v.toFixed(2) + '%' : fmtInt(v);
 
   return new Chart(canvas, {
     type: 'bar',
@@ -495,16 +498,16 @@ function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, ta
           backgroundColor: '#141414', padding: 12, cornerRadius: 10,
           callbacks: {
             label: (ctx) => ctx.dataset._isRemainder
-              ? ` ${ctx.dataset.label.replace(' — excluded by current toggle', '')}: +${ctx.raw.toFixed(2)}% excluded by toggle`
-              : ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)}%`,
+              ? ` ${ctx.dataset.label.replace(' — excluded by current toggle', '')}: +${fmtVal(ctx.raw)} excluded by toggle`
+              : ` ${ctx.dataset.label}: ${fmtVal(ctx.raw)}`,
           },
         },
-        totalLabelPlugin: { totals: fullTotals },
-        targetBandPlugin: { value: targetPct },
+        totalLabelPlugin: { totals: fullTotals, formatter: fmtVal },
+        targetBandPlugin: { value: mode === 'pct' ? targetPct : null },
       },
       scales: {
         x: { stacked: true, grid: { display: false } },
-        y: { stacked: true, beginAtZero: true, suggestedMax: maxTotal * 1.18, ticks: { callback: v => v + '%' }, grid: { color: 'rgba(20,20,20,0.06)' } },
+        y: { stacked: true, beginAtZero: true, suggestedMax: maxTotal * 1.18, ticks: { callback: v => mode === 'pct' ? v + '%' : v }, grid: { color: 'rgba(20,20,20,0.06)' } },
       },
     },
     plugins: [targetBandPlugin, totalLabelPlugin],

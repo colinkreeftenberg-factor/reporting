@@ -39,6 +39,7 @@ function renderActivePage() {
   const page = PAGES.find(p => p.id === activePageId);
   if (!pageFilterStates[page.id]) {
     pageFilterStates[page.id] = new FilterState({}, () => {});
+    if (page.id === 'logistics') pageFilterStates[page.id].weeksList = DataStore.logisticsWeeks;
   }
   window.scrollTo(0, 0);
   page.render(container, pageFilterStates[page.id]);
@@ -122,6 +123,12 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('.filter-panel.open').forEach(p => p.classList.remove('open'));
     Object.values(pageFilterStates).forEach(fs => { fs.openFilterKey = null; });
   }
+});
+
+document.getElementById('resetFiltersBtn')?.addEventListener('click', () => {
+  const fs = pageFilterStates[activePageId];
+  if (fs) fs.resetKeepCountryAndWeeks();
+  renderActivePage();
 });
 
 init();
