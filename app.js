@@ -4,7 +4,7 @@
    ============================================================ */
 
 const PAGES = [
-  { id: 'general', label: 'General Error Rates', render: PageGeneral },
+  { id: 'general', label: 'Operational Errors', render: PageGeneral },
   { id: 'recipe', label: 'Recipe Deep Dive', render: PageRecipe },
   { id: 'all', label: 'All Errors', render: PageAll },
   { id: 'category', label: 'Error Category Drill Down', render: PageCategoryDrill },
@@ -36,6 +36,7 @@ function renderNav() {
 function renderActivePage() {
   const container = document.getElementById('pageContent');
   container.innerHTML = '';
+  document.getElementById('floatingBreadcrumb').innerHTML = '';
   const page = PAGES.find(p => p.id === activePageId);
   if (!pageFilterStates[page.id]) {
     pageFilterStates[page.id] = new FilterState({}, () => {});
@@ -88,6 +89,7 @@ async function init() {
   }
 
   await DataStore.load();
+  await CommentsStore.load(); // non-fatal if this fails — comments feature just stays disabled
 
   document.getElementById('loadingOverlay').style.display = 'none';
   document.getElementById('app').style.display = 'flex';

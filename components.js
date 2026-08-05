@@ -594,10 +594,79 @@ function renderCompositionChart(canvas, weeks, groups, groupValueByWeek, mode) {
   });
 }
 
+// ---- Comment modal (view/add comments for a specific team/market/week cell) ----
+
+function showCommentModal({ team, market, week, onSaved }) {
+  const overlay = el('div', { class: 'modal-overlay' });
+  const modal = el('div', { class: 'modal-card' });
+
+  modal.appendChild(el('div', { class: 'modal-header' }, [
+    el('div', {}, [
+      el('div', { class: 'modal-title' }, [team]),
+      el('div', { class: 'modal-subtitle' }, [`${market.replace('FA-', '')} · ${week}`]),
+    ]),
+    el('button', { class: 'modal-close', onclick: () => overlay.remove() }, ['×']),
+  ]));
+
+  const listWrap = el('div', { class: 'modal-comments-list' });
+  function renderList() {
+    listWrap.innerHTML = '';
+    const current = CommentsStore.getFor(team, market, week);
+    if (!current.length) {
+      listWrap.appendChild(el('div', { class: 'modal-empty' }, ['No comments yet — be the first to add context for this number.']));
+    }
+    current.slice().reverse().forEach(c => {
+      listWrap.appendChild(el('div', { class: 'comment-item' }, [
+        el('div', { class: 'comment-meta' }, [`${c.author} · ${new Date(c.createdAt).toLocaleString()}`]),
+        el('div', { class: 'comment-text' }, [c.text]),
+      ]));
+    });
+  }
+  renderList();
+  modal.appendChild(listWrap);
+
+  const savedName = (() => { try { return localStorage.getItem('factor-dashboard-commenter-name') || ''; } catch (e) { return ''; } })();
+  const nameInput = el('input', { type: 'text', class: 'comment-name-input', placeholder: 'Your name' });
+  nameInput.value = savedName;
+  const textArea = el('textarea', { class: 'comment-textarea', placeholder: 'Add context for this number...', rows: '3' });
+  const errorMsg = el('div', { class: 'comment-error' });
+  errorMsg.style.display = 'none';
+  const submitBtn = el('button', { class: 'comment-submit-btn' }, ['Add Comment']);
+
+  submitBtn.onclick = async () => {
+    const text = textArea.value.trim();
+    const author = nameInput.value.trim() || 'Anonymous';
+    if (!text) { textArea.focus(); return; }
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+    errorMsg.style.display = 'none';
+    try {
+      try { localStorage.setItem('factor-dashboard-commenter-name', author); } catch (e) { /* ignore */ }
+      await CommentsStore.add(team, market, week, text, author);
+      textArea.value = '';
+      renderList();
+      if (onSaved) onSaved();
+    } catch (e) {
+      errorMsg.textContent = 'Could not save comment: ' + e.message + '. Check that a Vercel KV database is connected to this project.';
+      errorMsg.style.display = 'block';
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Add Comment';
+    }
+  };
+
+  modal.appendChild(el('div', { class: 'comment-composer' }, [nameInput, textArea, errorMsg, submitBtn]));
+
+  overlay.appendChild(modal);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  textArea.focus();
+}
+
 // ---- Per-week pivot table (rows = group, columns = weeks) ----------------------
 
 // rows: [{ key, cells: { week: number } }]; cellFormatter(value) -> {display, cls}
-function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRow }) {
+function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRow, commentsFor, onCellClick }) {
   const wrap = el('div', { class: 'table-scroll' });
   const table = el('table', { class: 'data-table' });
   const thead = el('thead');
@@ -611,12 +680,23 @@ function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRo
     ])]));
   }
   rows.forEach(row => {
-    const tr = el('tr', { onclick: onRowClick ? () => onRowClick(row.key) : null });
-    tr.appendChild(el('td', {}, [row.key]));
+    const tr = el('tr', { class: row.bold ? 'pivot-bucket-row' : '' });
+    const labelTd = el('td', {
+      class: (row.indent ? 'pivot-indent-cell ' : '') + (onRowClick ? 'pivot-clickable-label' : ''),
+      onclick: onRowClick ? () => onRowClick(row.key) : null,
+    }, [row.key]);
+    tr.appendChild(labelTd);
     weeks.forEach(w => {
       const val = row.cells[w];
       const { display, cls } = cellFormatter(val, w, row.key);
-      tr.appendChild(el('td', { class: 'cell-num ' + (cls || '') }, [display]));
+      const td = el('td', { class: 'cell-num ' + (cls || '') + (onCellClick ? ' pivot-commentable-cell' : ''), onclick: onCellClick ? () => onCellClick(row.key, w) : null }, [display]);
+      if (commentsFor) {
+        const cComments = commentsFor(row.key, w);
+        if (cComments && cComments.length) {
+          td.appendChild(el('span', { class: 'comment-dot', title: `${cComments.length} comment${cComments.length > 1 ? 's' : ''}` }));
+        }
+      }
+      tr.appendChild(td);
     });
     tbody.appendChild(tr);
   });

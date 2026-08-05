@@ -8,7 +8,7 @@ class FilterState {
   constructor(defaults, onChange) {
     this.state = Object.assign({
       weeks: [],       // empty = "all weeks" (excluding oldest, handled in DataStore.weeks)
-      markets: [],     // empty = FA-EU (all markets)
+      markets: ['FA-EU'],     // explicit default so it shows as selected from first open
       teams: [],
       errorCategory: [],
       errorSubcategory: [],

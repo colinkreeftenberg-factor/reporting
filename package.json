@@ -1,0 +1,9 @@
+{
+  "name": "factor-error-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@vercel/kv": "^2.0.0",
+    "jsdom": "^30.0.1"
+  }
+}

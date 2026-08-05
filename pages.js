@@ -9,6 +9,27 @@ function uniqueSorted(rows, field) {
   return Array.from(new Set(rows.map(r => r[field]).filter(Boolean))).sort();
 }
 
+// Week picker + country pills side by side — used at the top of every page.
+function weekAndCountryRow(fs, render) {
+  return el('div', { class: 'top-filter-row' }, [WeekRangePicker(fs, render), MarketPillRow(fs, render)]);
+}
+
+// Renders the drill breadcrumb into the floating top-right slot (next to the
+// reset button) instead of inline, so it stays visible while scrolling.
+function renderFloatingBreadcrumb(rootLabel, fs, onNavigate) {
+  const holder = document.getElementById('floatingBreadcrumb');
+  if (!holder) return;
+  holder.innerHTML = '';
+  if (fs.drillPath.length) holder.appendChild(Breadcrumb(rootLabel, fs, onNavigate));
+}
+
+// "Team A → Category B" style label for showing exactly what a table is
+// currently scoped to, so it's not lost once the top-level breadcrumb scrolls
+// out of the normal page flow.
+function drillPathLabel(fs) {
+  return fs.drillPath.map(c => c.label).join(' → ');
+}
+
 function optionsFor(list) { return list.map(v => ({ value: v, label: v })); }
 
 function standardFilterSpec(fs, rows, { includeTeamFilter = true, teamScope = null } = {}) {
@@ -89,9 +110,8 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     container.innerHTML = '';
     setPageHeader(title, subtitle);
 
-    container.appendChild(Breadcrumb(title, fs, render));
-    container.appendChild(WeekRangePicker(fs, render));
-    container.appendChild(MarketPillRow(fs, render));
+    renderFloatingBreadcrumb(title, fs, render);
+    container.appendChild(weekAndCountryRow(fs, render));
 
     const spec = standardFilterSpec(fs, scopedRows, { includeTeamFilter: !fs.drillPath.length, teamScope });
     container.appendChild(FilterBar(fs, spec, render));
@@ -167,12 +187,20 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     container.appendChild(chartCard);
     renderStackedWeeklyChart(chartCard.querySelector('canvas'), weeks, groupKeys, groupErrorPctByWeek, target, { remainderByWeek, fixedMax });
 
+    // Comments only make unambiguous sense against ONE specific team + market +
+    // week — so this is only enabled at the team level, with a single real
+    // market selected (not FA-EU/combined, not multiple markets at once).
+    const singleMarket = (fs.state.markets.length === 1 && fs.state.markets[0] !== 'FA-EU') ? fs.state.markets[0] : null;
+    const commentsEnabled = level === 'team' && !!singleMarket && CommentsStore.loaded;
+
     // ---- Table 1: per week per group (breakdown), colored vs EACH ROW'S OWN target in % mode ----
     const breakdownCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
         el('div', {}, [
           el('div', { class: 'card-title' }, [`Breakdown by ${levelLabel} — ${breakdownMode === 'pct' ? 'Error % per Week' : 'Absolute Errors per Week'}`]),
+          fs.drillPath.length ? el('div', { class: 'card-path' }, [`Viewing: ${drillPathLabel(fs)}`]) : null,
           el('div', { class: 'card-desc' }, [breakdownMode === 'pct' ? (canDrillFurther ? 'Click a row to drill in · red = above that row\'s own target' : 'Red = above target') : (canDrillFurther ? 'Click a row to drill in · raw error counts, no target formatting' : 'Raw error counts, no target formatting')]),
+          level === 'team' ? el('div', { class: 'card-desc' }, [commentsEnabled ? 'Click a cell to view or add a comment · dot = has comments' : 'Select a single country above to add comments to these cells']) : null,
         ]),
         el('div', { class: 'toggle-pill' }, [
           el('button', { class: breakdownMode === 'pct' ? 'active' : '', onclick: () => { breakdownMode = 'pct'; render(); } }, ['Error %']),
@@ -190,6 +218,8 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
         return { display: fmtPct(v), cls: (rt === null || rt === undefined) ? '' : (v > rt ? 'cell-pct-bad' : 'cell-pct-good') };
       },
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
+      commentsFor: commentsEnabled ? (team, w) => CommentsStore.getFor(team, singleMarket, w) : null,
+      onCellClick: commentsEnabled ? (team, w) => { showCommentModal({ team, market: singleMarket, week: w, onSaved: render }); } : null,
       totalsRow: {
         cells: weeks.reduce((acc, w) => {
           const totalErrors = groupKeys.reduce((s, k) => s + cellOrZero(matrix, k, w).errorCount, 0);
@@ -205,7 +235,7 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     // ---- Table 2: Compensation per week per group, with Total/Per-Box/Per-Error toggle ----
     const compCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, ['Compensation per Week']), el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in' : ''])]),
+        el('div', {}, [el('div', { class: 'card-title' }, ['Compensation per Week']), fs.drillPath.length ? el('div', { class: 'card-path' }, [`Viewing: ${drillPathLabel(fs)}`]) : null, el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in' : ''])]),
         (function () {
           return el('div', { class: 'toggle-pill' }, [
             el('button', { class: compensationMode === 'total' ? 'active' : '', onclick: () => { compensationMode = 'total'; render(); } }, ['Total']),
@@ -247,7 +277,7 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
 
 function PageGeneral(container, fs) {
   buildTeamRatesPage(container, fs, {
-    title: 'General Operational Error Rates',
+    title: 'Operational Errors',
     subtitle: 'Operational teams only · weekly review view',
     teamScope: OPERATIONAL_TEAMS,
   });
@@ -276,8 +306,7 @@ function PageRecipe(container, fs) {
     container.innerHTML = '';
     setPageHeader('Recipe Deep Dive', 'Which recipes create the biggest operational impact');
 
-    container.appendChild(WeekRangePicker(fs, render));
-    container.appendChild(MarketPillRow(fs, render));
+    container.appendChild(weekAndCountryRow(fs, render));
 
     const spec = [
       { key: 'recipe', label: 'Recipe', type: 'multiselect', options: optionsFor(uniqueSorted(recipeRows, 'recipe_title')) },
@@ -455,19 +484,16 @@ function PageCategoryDrill(container, fs) {
 
   function renderInner() {
     container.innerHTML = '';
-    setPageHeader('Error Category Drill Down', 'Group by subcategory, complaint, and mapped detail within a category');
+    setPageHeader('Error Category Drill Down', 'Click through category → subcategory → complaint → mapped detail');
 
-    container.appendChild(WeekRangePicker(fs, render));
-    container.appendChild(MarketPillRow(fs, render));
+    container.appendChild(weekAndCountryRow(fs, render));
 
     const spec = [
-      { key: 'markets', label: 'Country', type: 'multiselect', exclusiveValue: 'FA-EU', options: optionsFor(MARKET_FILTER_OPTIONS) },
       { key: 'teams', label: 'Team', type: 'multiselect', options: optionsFor(uniqueSorted(allRows, 'team')) },
-      { key: 'errorCategory', label: 'Error Category', type: 'multiselect', options: optionsFor(uniqueSorted(allRows, 'error_category')) },
     ];
     container.appendChild(FilterBar(fs, spec, render));
 
-    const filter = { weeks: fs.state.weeks, markets: fs.state.markets, teams: fs.state.teams, errorCategory: fs.state.errorCategory };
+    const filter = { weeks: fs.state.weeks, markets: fs.state.markets, teams: fs.state.teams };
     const filtered = filterRows(allRows, filter);
     const weeks = fs.effectiveWeeks(); const markets = fs.effectiveMarkets();
     const agg = aggregate(filtered, weeks, markets);
@@ -478,11 +504,16 @@ function PageCategoryDrill(container, fs) {
       return;
     }
 
-    // No category selected yet: stack by category. Once selected: stack by subcategory.
-    const groupField = fs.state.errorCategory.length ? 'error_subcategory' : 'error_category';
-    const levelLabel = fs.state.errorCategory.length ? 'Subcategory' : 'Error Category';
-    const matrix = buildWeekGroupMatrix(filtered, groupField, weeks, markets);
+    const level = CATEGORY_DRILL_CHAIN[Math.min(fs.drillPath.length, CATEGORY_DRILL_CHAIN.length - 1)];
+    const levelLabel = { error_category: 'Error Category', error_subcategory: 'Subcategory', complaint: 'Complaint', mapped_detail_1: 'Mapped Detail' }[level];
+    const canDrillFurther = CATEGORY_DRILL_CHAIN.indexOf(level) < CATEGORY_DRILL_CHAIN.length - 1;
+
+    const drillFilteredRows = applyGenericDrillFilter(filtered, fs.drillPath);
+    const rowsForLevel = withBlankGroupLabel(drillFilteredRows, level);
+    const matrix = buildWeekGroupMatrix(rowsForLevel, level, weeks, markets);
     const groupKeys = orderGroupsByImpact(matrix, weeks);
+
+    renderFloatingBreadcrumb('All Categories', fs, render);
 
     if (!groupKeys.length) {
       container.appendChild(el('div', { class: 'card' }, [el('div', { class: 'empty-state' }, [el('div', { class: 'icon' }, ['—']), 'No rows match the current filters.'])]));
@@ -494,7 +525,7 @@ function PageCategoryDrill(container, fs) {
 
     const chartCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly Error % by ${levelLabel}`]), el('div', { class: 'card-desc' }, [fs.state.errorCategory.length ? 'Select a category above to change what this stacks by' : 'Select a category above to drill into its subcategories'])]),
+        el('div', {}, [el('div', { class: 'card-title' }, [`Weekly Error % by ${levelLabel}`]), el('div', { class: 'card-desc' }, ['Click a row in the table below to drill in'])]),
       ]),
       el('div', { class: 'chart-wrap' }, [el('canvas')]),
     ]);
@@ -503,7 +534,11 @@ function PageCategoryDrill(container, fs) {
 
     const breakdownCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', { class: 'card-title' }, [`${breakdownMode === 'pct' ? 'Error % per Week' : 'Absolute Errors per Week'} by ${levelLabel}`]),
+        el('div', {}, [
+          el('div', { class: 'card-title' }, [`${breakdownMode === 'pct' ? 'Error % per Week' : 'Absolute Errors per Week'} by ${levelLabel}`]),
+          fs.drillPath.length ? el('div', { class: 'card-path' }, [`Viewing: ${drillPathLabel(fs)}`]) : null,
+          el('div', { class: 'card-desc' }, [canDrillFurther ? 'Click a row to drill in' : '']),
+        ]),
         el('div', { class: 'toggle-pill' }, [
           el('button', { class: breakdownMode === 'pct' ? 'active' : '', onclick: () => { breakdownMode = 'pct'; render(); } }, ['Error %']),
           el('button', { class: breakdownMode === 'absolute' ? 'active' : '', onclick: () => { breakdownMode = 'absolute'; render(); } }, ['Absolute']),
@@ -515,6 +550,7 @@ function PageCategoryDrill(container, fs) {
       weeks,
       rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = breakdownMode === 'pct' ? matrix[k][w].errorPct : matrix[k][w].errorCount; return acc; }, {}) })),
       cellFormatter: (v) => breakdownMode === 'pct' ? { display: fmtPct(v), cls: '' } : { display: fmtInt(v), cls: '' },
+      onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
       totalsRow: {
         cells: weeks.reduce((acc, w) => {
           acc[w] = groupKeys.reduce((s, k) => s + (breakdownMode === 'pct' ? matrix[k][w].errorPct : matrix[k][w].errorCount), 0);
@@ -527,7 +563,7 @@ function PageCategoryDrill(container, fs) {
 
     const compCard = el('div', { class: 'card' }, [
       el('div', { class: 'card-header' }, [
-        el('div', { class: 'card-title' }, [`Compensation per Week by ${levelLabel}`]),
+        el('div', {}, [el('div', { class: 'card-title' }, [`Compensation per Week by ${levelLabel}`]), fs.drillPath.length ? el('div', { class: 'card-path' }, [`Viewing: ${drillPathLabel(fs)}`]) : null]),
         el('div', { class: 'toggle-pill' }, [
           el('button', { class: compensationMode === 'total' ? 'active' : '', onclick: () => { compensationMode = 'total'; render(); } }, ['Total']),
           el('button', { class: compensationMode === 'perbox' ? 'active' : '', onclick: () => { compensationMode = 'perbox'; render(); } }, ['Per Box']),
@@ -545,6 +581,7 @@ function PageCategoryDrill(container, fs) {
       weeks,
       rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = catCompValueFor(matrix[k][w]); return acc; }, {}) })),
       cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v), cls: '' }),
+      onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
       totalsRow: {
         cells: weeks.reduce((acc, w) => {
           const totalComp = groupKeys.reduce((s, k) => s + matrix[k][w].compensationTotal, 0);
@@ -558,13 +595,32 @@ function PageCategoryDrill(container, fs) {
     }));
     container.appendChild(compCard);
 
-    if (!fs.state.errorCategory.length) return;
+    // ---- Market comparison table, once drilled at least one level ----
+    // Ignores the country filter deliberately — the whole point is to see
+    // every market side by side once you've narrowed down to a specific
+    // category (e.g. account_management).
+    if (fs.drillPath.length >= 1) {
+      const marketMatrix = buildMarketComparisonMatrix(drillFilteredRows, weeks);
+      const marketRows = ALL_MARKETS.map(m => ({ key: m.replace('FA-', ''), cells: weeks.reduce((acc, w) => { acc[w] = marketMatrix[m][w].errorPct; return acc; }, {}) }));
+      const marketCard = el('div', { class: 'card' }, [
+        el('div', { class: 'card-header' }, [
+          el('div', {}, [el('div', { class: 'card-title' }, ['Market Comparison']), el('div', { class: 'card-path' }, [`Viewing: ${drillPathLabel(fs)}`]), el('div', { class: 'card-desc' }, ['Error % per market, ignoring the country filter above — for comparing markets directly'])]),
+        ]),
+      ]);
+      marketCard.appendChild(PivotTable({
+        rowLabel: 'Market',
+        weeks,
+        rows: marketRows,
+        cellFormatter: (v) => ({ display: fmtPct(v), cls: '' }),
+      }));
+      container.appendChild(marketCard);
+    }
 
     // Granular reference table: subcategory / complaint / mapped_detail_1 combos
-    // (kept as an accumulated reference table — this level of detail is too fine-grained
-    // for a per-week pivot to stay readable; ask if you'd like this split by week too)
+    if (fs.drillPath.length < 1) return;
+
     const map = new Map();
-    filtered.forEach(r => {
+    drillFilteredRows.forEach(r => {
       const key = [r.error_subcategory, r.complaint, r.mapped_detail_1].join(' | ');
       if (!map.has(key)) map.set(key, { error_subcategory: r.error_subcategory, complaint: r.complaint, mapped_detail_1: r.mapped_detail_1, errorCount: 0, compensationTotal: 0 });
       const g = map.get(key); g.errorCount++; g.compensationTotal += r.compensation;
@@ -597,6 +653,7 @@ function PageLogistics(container, fs) {
   let compensationMode = 'total'; // 'total' | 'perbox' | 'pererror'
   let statusMode = 'pct'; // 'pct' | 'absolute'
   let issueMode = 'pct'; // 'pct' | 'absolute' — shared by the issue-type chart, table, and per-carrier cards
+  let subcategoryView = 'normal'; // 'normal' | 'carrier' — only used at the top subcategory level
 
   function render() { preserveScroll(renderInner); }
 
@@ -612,8 +669,7 @@ function PageLogistics(container, fs) {
       return;
     }
 
-    container.appendChild(WeekRangePicker(fs, render));
-    container.appendChild(MarketPillRow(fs, render));
+    container.appendChild(weekAndCountryRow(fs, render));
 
     const spec = [
       { key: 'markets', label: 'Country', type: 'multiselect', exclusiveValue: 'FA-EU', options: optionsFor(MARKET_FILTER_OPTIONS) },
@@ -652,8 +708,8 @@ function PageLogistics(container, fs) {
     const issueMatrix = buildWeekGroupMatrix(rowsForLevel, level, weeks, markets);
     const issueKeys = orderGroupsByImpact(issueMatrix, weeks);
 
-    container.appendChild(el('div', { style: 'display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;' }, [
-      Breadcrumb('All Subcategories', fs, render),
+    renderFloatingBreadcrumb('All Subcategories', fs, render);
+    container.appendChild(el('div', { style: 'display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px;' }, [
       el('div', { class: 'toggle-pill' }, [
         el('button', { class: issueMode === 'pct' ? 'active' : '', onclick: () => { issueMode = 'pct'; render(); } }, ['Error %']),
         el('button', { class: issueMode === 'absolute' ? 'active' : '', onclick: () => { issueMode = 'absolute'; render(); } }, ['Absolute']),
@@ -673,15 +729,51 @@ function PageLogistics(container, fs) {
     renderStackedWeeklyChart(chart1Card.querySelector('canvas'), weeks, issueKeys, issuePctByWeek, target, { mode: issueMode });
 
     // ---- Section 2: table by current drill level, with Totals row ----
+    // At the top subcategory level, an extra "Carrier View" mode nests each
+    // carrier's contribution underneath its subcategory bucket.
+    const showSubcategoryViewToggle = level === 'error_subcategory';
+    const inCarrierView = showSubcategoryViewToggle && subcategoryView === 'carrier';
+
+    let table1Rows;
+    if (inCarrierView) {
+      table1Rows = [];
+      issueKeys.forEach(subKey => {
+        table1Rows.push({
+          key: subKey, bold: true,
+          cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? issueMatrix[subKey][w].errorPct : issueMatrix[subKey][w].errorCount; return acc; }, {}),
+        });
+        const subRows = rowsForLevel.filter(r => r.error_subcategory === subKey);
+        const carrierSubMatrix = buildWeekGroupMatrix(subRows, 'carrier', weeks, markets);
+        const carrierSubKeys = orderGroupsByImpact(carrierSubMatrix, weeks);
+        carrierSubKeys.forEach(ck => {
+          table1Rows.push({
+            key: ck, indent: true,
+            cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? carrierSubMatrix[ck][w].errorPct : carrierSubMatrix[ck][w].errorCount; return acc; }, {}),
+          });
+        });
+      });
+    } else {
+      table1Rows = issueKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? issueMatrix[k][w].errorPct : issueMatrix[k][w].errorCount; return acc; }, {}) }));
+    }
+
     const table1Card = el('div', { class: 'card' }, [
-      el('div', { class: 'card-header' }, [el('div', { class: 'card-title' }, [`${issueMode === 'pct' ? 'Error %' : 'Absolute Errors'} per Week by ${levelLabel}`]), el('div', { class: 'card-desc' }, [issueMode === 'pct' ? (canDrillFurther ? 'Click a row to drill in · red = above the Last Mile target' : 'Red = above the Last Mile target') : (canDrillFurther ? 'Click a row to drill in · raw counts, no target formatting' : 'Raw counts, no target formatting')])]),
+      el('div', { class: 'card-header' }, [
+        el('div', {}, [
+          el('div', { class: 'card-title' }, [`${issueMode === 'pct' ? 'Error %' : 'Absolute Errors'} per Week by ${levelLabel}`]),
+          el('div', { class: 'card-desc' }, [inCarrierView ? 'Each subcategory bucket broken into its carriers · red = above the Last Mile target' : (issueMode === 'pct' ? (canDrillFurther ? 'Click a row to drill in · red = above the Last Mile target' : 'Red = above the Last Mile target') : (canDrillFurther ? 'Click a row to drill in · raw counts, no target formatting' : 'Raw counts, no target formatting'))]),
+        ]),
+        showSubcategoryViewToggle ? el('div', { class: 'toggle-pill' }, [
+          el('button', { class: subcategoryView === 'normal' ? 'active' : '', onclick: () => { subcategoryView = 'normal'; render(); } }, ['Normal']),
+          el('button', { class: subcategoryView === 'carrier' ? 'active' : '', onclick: () => { subcategoryView = 'carrier'; render(); } }, ['Carrier View']),
+        ]) : null,
+      ]),
     ]);
     table1Card.appendChild(PivotTable({
       rowLabel: levelLabel,
       weeks,
-      rows: issueKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? issueMatrix[k][w].errorPct : issueMatrix[k][w].errorCount; return acc; }, {}) })),
+      rows: table1Rows,
       cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v), cls: '' } : { display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : 'cell-pct-good' },
-      onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
+      onRowClick: (!inCarrierView && canDrillFurther) ? (key) => { fs.pushDrill(level, key); render(); } : null,
       totalsRow: {
         cells: weeks.reduce((acc, w) => { acc[w] = issueKeys.reduce((s, k) => s + (issueMode === 'pct' ? issueMatrix[k][w].errorPct : issueMatrix[k][w].errorCount), 0); return acc; }, {}),
         cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v) } : { display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : '' },

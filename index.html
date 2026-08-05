@@ -77,8 +77,8 @@ button{font-family:inherit;}
 .sidebar-brand .logo{
   font-family:var(--font-display);
   font-weight:800;
-  font-size:22px;
-  letter-spacing:-0.02em;
+  font-size:28px;
+  letter-spacing:-0.01em;
   color:var(--natural);
 }
 .sidebar-brand .logo span{color:var(--saffron);}
@@ -273,6 +273,11 @@ button{font-family:inherit;}
 }
 .filter-clear:hover{color:var(--text-primary);}
 
+/* ---------- Top filter row (week picker + country pills side by side) ---------- */
+.top-filter-row{display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap; margin-bottom:14px;}
+.top-filter-row .week-range-picker{margin-bottom:0;}
+.top-filter-row .market-pill-row{margin-bottom:0; align-items:center;}
+
 /* ---------- Week range picker (compact, inline dropdowns) ---------- */
 .week-range-picker{
   display:inline-block; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
@@ -297,9 +302,17 @@ button{font-family:inherit;}
 }
 .week-range-quick button:hover{border-color:var(--text-tertiary); color:var(--text-primary);}
 
-/* ---------- Floating reset filters button ---------- */
-.floating-reset-btn{
+/* ---------- Floating controls (breadcrumb + reset button, top-right) ---------- */
+.floating-controls{
   position:fixed; top:20px; right:28px; z-index:70;
+  display:flex; flex-direction:column; align-items:flex-end; gap:10px; max-width:360px;
+}
+.floating-controls .breadcrumb{
+  margin-bottom:0; justify-content:flex-end; background:var(--surface); border:1px solid var(--border);
+  border-radius:999px; padding:6px 8px; box-shadow:var(--shadow-card);
+}
+.floating-reset-btn{
+  position:static;
   display:flex; align-items:center; gap:7px;
   background:var(--carbon); color:var(--saffron); border:none;
   padding:11px 18px; border-radius:999px; font-family:var(--font-body); font-weight:700; font-size:13.5px;
@@ -308,7 +321,7 @@ button{font-family:inherit;}
 .floating-reset-btn:hover{transform:translateY(-1px);}
 .floating-reset-btn .reset-icon{font-size:15px;}
 @media(max-width:900px){
-  .floating-reset-btn{top:auto; bottom:20px; right:20px; padding:12px 16px;}
+  .floating-controls{top:auto; bottom:20px; right:20px;}
 }
 
 /* ---------- Carrier group (visually ties per-carrier cards together) ---------- */
@@ -352,6 +365,7 @@ button{font-family:inherit;}
 .card-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;}
 .card-title{font-family:var(--font-display); font-weight:700; font-size:16.5px;}
 .card-desc{font-size:12.5px; color:var(--text-secondary); margin-top:2px;}
+.card-path{font-size:12.5px; font-weight:700; color:var(--ocean); margin-top:4px;}
 .chart-wrap{position:relative; height:320px;}
 .grid-2{display:grid; grid-template-columns:1.4fr 1fr; gap:24px;}
 @media(max-width:1100px){.grid-2{grid-template-columns:1fr;}}
@@ -374,6 +388,55 @@ table.data-table tbody tr:hover{background:var(--surface-sunken);}
 table.data-table tbody tr:nth-child(even){background:rgba(20,20,20,0.012);}
 table.data-table tbody tr.pivot-totals-row{background:var(--surface-sunken); font-weight:700; border-top:2px solid var(--carbon);}
 table.data-table tbody tr.pivot-totals-row td{color:var(--text-primary);}
+table.data-table tbody tr.pivot-bucket-row{background:rgba(20,20,20,0.035); font-weight:700;}
+table.data-table tbody td.pivot-indent-cell{padding-left:32px; font-weight:400; color:var(--text-secondary);}
+table.data-table tbody td.pivot-clickable-label{cursor:pointer;}
+table.data-table tbody td.pivot-clickable-label:hover{text-decoration:underline;}
+
+/* ---------- Comments ---------- */
+td.pivot-commentable-cell{cursor:pointer; position:relative;}
+td.pivot-commentable-cell:hover{background:rgba(255,200,0,0.10);}
+.comment-dot{
+  display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--saffron);
+  margin-left:6px; vertical-align:middle; box-shadow:0 0 0 2px rgba(255,200,0,0.25);
+}
+.modal-overlay{
+  position:fixed; inset:0; background:rgba(20,20,20,0.55); z-index:100;
+  display:flex; align-items:center; justify-content:center; padding:20px;
+}
+.modal-card{
+  background:var(--surface); border-radius:var(--radius-lg); box-shadow:var(--shadow-hover);
+  width:100%; max-width:460px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;
+}
+.modal-header{
+  display:flex; align-items:flex-start; justify-content:space-between; padding:18px 20px;
+  border-bottom:1px solid var(--border);
+}
+.modal-title{font-family:var(--font-display); font-weight:700; font-size:16px;}
+.modal-subtitle{font-family:var(--font-utility); font-size:12.5px; color:var(--text-secondary); margin-top:2px;}
+.modal-close{background:none; border:none; font-size:22px; line-height:1; cursor:pointer; color:var(--text-secondary); padding:0 4px;}
+.modal-close:hover{color:var(--text-primary);}
+.modal-comments-list{padding:14px 20px; overflow-y:auto; flex:1; min-height:60px;}
+.modal-empty{color:var(--text-secondary); font-size:13.5px; padding:12px 0;}
+.comment-item{padding:10px 0; border-bottom:1px solid var(--border);}
+.comment-item:last-child{border-bottom:none;}
+.comment-meta{font-size:11.5px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;}
+.comment-text{font-size:13.5px; line-height:1.5; white-space:pre-wrap;}
+.comment-composer{padding:16px 20px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px;}
+.comment-name-input{
+  font-family:var(--font-body); font-size:13px; padding:8px 10px; border:1px solid var(--border);
+  border-radius:var(--radius-sm); background:var(--surface-sunken);
+}
+.comment-textarea{
+  font-family:var(--font-body); font-size:13.5px; padding:10px; border:1px solid var(--border);
+  border-radius:var(--radius-sm); background:var(--surface-sunken); resize:vertical;
+}
+.comment-error{color:var(--cherry); font-size:12.5px; display:none;}
+.comment-submit-btn{
+  background:var(--carbon); color:var(--saffron); border:none; padding:10px 16px;
+  border-radius:var(--radius-sm); font-weight:700; font-size:13.5px; cursor:pointer; align-self:flex-end;
+}
+.comment-submit-btn:disabled{opacity:0.6; cursor:default;}
 .cell-num{text-align:right; font-variant-numeric:tabular-nums;}
 .cell-pct-bad{color:var(--cherry); font-weight:700; background:rgba(255,88,93,0.10); border-radius:8px;}
 .cell-pct-good{color:var(--basil); font-weight:700; background:rgba(117,194,109,0.12); border-radius:8px;}
@@ -433,9 +496,9 @@ table.data-table tbody tr.pivot-totals-row td{color:var(--text-primary);}
 <div class="app" id="app" style="display:none;">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand">
-      <div class="logo">Factor<span>_</span></div>
+      <div class="logo">FACTOR<span>_</span></div>
     </div>
-    <div class="sidebar-sub">Operational Error Review</div>
+    <div class="sidebar-sub">Error Reporting Dashboards</div>
     <nav class="nav" id="navList"></nav>
     <div class="sidebar-footer">
       <span class="status-dot ok" id="dataStatusDot"></span><span id="dataStatusText">Data connected</span>
@@ -455,9 +518,12 @@ table.data-table tbody tr.pivot-totals-row td{color:var(--text-primary);}
     <div id="pageContent"></div>
   </main>
 
-  <button id="resetFiltersBtn" class="floating-reset-btn" title="Reset all filters except country and weeks">
-    <span class="reset-icon">↺</span> Reset Filters
-  </button>
+  <div class="floating-controls">
+    <div id="floatingBreadcrumb"></div>
+    <button id="resetFiltersBtn" class="floating-reset-btn" title="Reset all filters except country and weeks">
+      <span class="reset-icon">↺</span> Reset Filters
+    </button>
+  </div>
 </div>
 
 <script>
@@ -472,6 +538,7 @@ const CONFIG = {
 };
 </script>
 <script src="./data.js"></script>
+<script src="./comments.js"></script>
 <script src="./filters.js"></script>
 <script src="./components.js"></script>
 <script src="./pages.js"></script>

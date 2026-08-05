@@ -376,6 +376,9 @@ function blendedTarget(teams, markets, weeks) {
 // once there are more than a handful of combinations.
 const LOGISTICS_DRILL_CHAIN = ['error_subcategory', 'complaint', 'mapped_detail_1'];
 
+// Drill chain for the Error Category Drill Down page.
+const CATEGORY_DRILL_CHAIN = ['error_category', 'error_subcategory', 'complaint', 'mapped_detail_1'];
+
 // Blank subcategory/complaint/detail values would otherwise be silently
 // dropped by buildWeekGroupMatrix's truthy filter — this keeps them visible
 // as their own "(none)" group instead of disappearing.
@@ -388,6 +391,29 @@ function withBlankGroupLabel(rows, field) {
 function applyGenericDrillFilter(rows, drillPath) {
   if (!drillPath.length) return rows;
   return rows.filter(r => drillPath.every(c => r[c.level] === c.value));
+}
+
+// For comparing all 5 markets side by side once drilled into a specific
+// category/subcategory/complaint — deliberately ignores the country filter,
+// since the whole point is to see every market's number at once.
+function buildMarketComparisonMatrix(rows, weeks) {
+  const matrix = {};
+  ALL_MARKETS.forEach(m => {
+    matrix[m] = {};
+    const fc = FA_TO_FC[m];
+    weeks.forEach(w => {
+      const wRows = rows.filter(r => r.week === w && r.country === fc);
+      const errorCount = wRows.length;
+      const compensationTotal = wRows.reduce((s, r) => s + r.compensation, 0);
+      const boxes = DataStore.boxCount([m], [w]);
+      matrix[m][w] = {
+        errorCount, compensationTotal,
+        errorPct: boxes > 0 ? (errorCount / boxes) * 100 : 0,
+        compPerBox: boxes > 0 ? compensationTotal / boxes : 0,
+      };
+    });
+  });
+  return matrix;
 }
 
 // Composite "issue type" key combining subcategory/complaint/detail into one
