@@ -13,7 +13,10 @@ const CommentsStore = {
   async load() {
     try {
       const res = await fetch('/api/comments');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
       const data = await res.json();
       this.comments = data.comments || [];
       this.loaded = true;

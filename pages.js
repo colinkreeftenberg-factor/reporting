@@ -200,7 +200,11 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
           el('div', { class: 'card-title' }, [`Breakdown by ${levelLabel} — ${breakdownMode === 'pct' ? 'Error % per Week' : 'Absolute Errors per Week'}`]),
           fs.drillPath.length ? el('div', { class: 'card-path' }, [`Viewing: ${drillPathLabel(fs)}`]) : null,
           el('div', { class: 'card-desc' }, [breakdownMode === 'pct' ? (canDrillFurther ? 'Click a row to drill in · red = above that row\'s own target' : 'Red = above target') : (canDrillFurther ? 'Click a row to drill in · raw error counts, no target formatting' : 'Raw error counts, no target formatting')]),
-          level === 'team' ? el('div', { class: 'card-desc' }, [commentsEnabled ? 'Click a cell to view or add a comment · dot = has comments' : 'Select a single country above to add comments to these cells']) : null,
+          level === 'team' ? el('div', { class: CommentsStore.loadError ? 'card-desc comments-error' : 'card-desc' }, [
+            CommentsStore.loadError ? `Comments unavailable: ${CommentsStore.loadError}` :
+            commentsEnabled ? 'Click a cell to view or add a comment · dot = has comments' :
+            'Select a single country above to add comments to these cells',
+          ]) : null,
         ]),
         el('div', { class: 'toggle-pill' }, [
           el('button', { class: breakdownMode === 'pct' ? 'active' : '', onclick: () => { breakdownMode = 'pct'; render(); } }, ['Error %']),

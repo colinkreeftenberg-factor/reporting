@@ -365,6 +365,7 @@ button{font-family:inherit;}
 .card-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;}
 .card-title{font-family:var(--font-display); font-weight:700; font-size:16.5px;}
 .card-desc{font-size:12.5px; color:var(--text-secondary); margin-top:2px;}
+.card-desc.comments-error{color:var(--cherry); font-weight:600;}
 .card-path{font-size:12.5px; font-weight:700; color:var(--ocean); margin-top:4px;}
 .chart-wrap{position:relative; height:320px;}
 .grid-2{display:grid; grid-template-columns:1.4fr 1fr; gap:24px;}
@@ -502,6 +503,7 @@ td.pivot-commentable-cell:hover{background:rgba(255,200,0,0.10);}
     <nav class="nav" id="navList"></nav>
     <div class="sidebar-footer">
       <span class="status-dot ok" id="dataStatusDot"></span><span id="dataStatusText">Data connected</span>
+      <div style="margin-top:6px;"><span class="status-dot" id="commentsStatusDot"></span><span id="commentsStatusText"></span></div>
     </div>
   </aside>
 

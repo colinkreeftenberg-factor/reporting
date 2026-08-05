@@ -1,16 +1,58 @@
 // Vercel serverless function backing the team-comments feature.
-// Requires a Vercel KV database attached to this project (Storage tab in the
-// Vercel dashboard -> Create Database -> KV -> Connect to this project).
-// Vercel automatically injects the KV_REST_API_URL / KV_REST_API_TOKEN env
-// vars once connected — no manual configuration needed beyond that click.
-import { kv } from '@vercel/kv';
+//
+// Uses @upstash/redis directly (not @vercel/kv) because Vercel Marketplace
+// "Upstash for Redis"/KV integrations don't always name their environment
+// variables the way the older @vercel/kv package expects. This searches for
+// any plausible variable name so it works regardless of how your specific
+// integration named things (e.g. "upstash-kv-aero-bucket" style prefixes).
+import { Redis } from '@upstash/redis';
 
 const STORE_KEY = 'factor-team-comments';
 
+function findEnv(...candidates) {
+  for (const name of candidates) {
+    if (process.env[name]) return process.env[name];
+  }
+  // Fall back to searching for ANY env var whose name ends with a matching
+  // suffix, to handle store-name-prefixed variants like
+  // "AERO_BUCKET_KV_REST_API_URL" or "UPSTASH_KV_AERO_BUCKET_REST_API_URL".
+  for (const name of candidates) {
+    const found = Object.keys(process.env).find(k => k.endsWith(name));
+    if (found) return process.env[found];
+  }
+  return undefined;
+}
+
+function getRedisClientOrThrow() {
+  const url = findEnv('KV_REST_API_URL', 'REDIS_REST_URL', 'UPSTASH_REDIS_REST_URL', '_REST_API_URL', '_REDIS_REST_URL');
+  const token = findEnv('KV_REST_API_TOKEN', 'REDIS_REST_TOKEN', 'UPSTASH_REDIS_REST_TOKEN', '_REST_API_TOKEN', '_REDIS_REST_TOKEN');
+  if (!url || !token) {
+    const relevantKeys = Object.keys(process.env).filter(k => /KV|REDIS|UPSTASH/i.test(k));
+    throw new Error(
+      `Could not find Redis/KV REST API credentials in environment variables. ` +
+      `Env var names containing KV/REDIS/UPSTASH found on this deployment: [${relevantKeys.join(', ') || 'none'}]. ` +
+      `Check the Storage tab in Vercel to confirm the database is connected to THIS project, and redeploy after connecting.`
+    );
+  }
+  return new Redis({ url, token });
+}
+
 export default async function handler(req, res) {
   try {
+    // Visit /api/comments?debug=1 to see which env vars were detected,
+    // without exposing their values — useful for confirming the connection
+    // without needing to check Vercel's function logs.
+    if (req.method === 'GET' && req.query && req.query.debug) {
+      const relevantKeys = Object.keys(process.env).filter(k => /KV|REDIS|UPSTASH/i.test(k)).sort();
+      let clientOk = false, clientError = null;
+      try { getRedisClientOrThrow(); clientOk = true; } catch (e) { clientError = e.message; }
+      return res.status(200).json({ relevantEnvVarNames: relevantKeys, clientInitialized: clientOk, clientError });
+    }
+
+    const redis = getRedisClientOrThrow();
+
     if (req.method === 'GET') {
-      const comments = (await kv.get(STORE_KEY)) || [];
+      const comments = (await redis.get(STORE_KEY)) || [];
       return res.status(200).json({ comments });
     }
 
@@ -19,7 +61,7 @@ export default async function handler(req, res) {
       if (!team || !market || !week || !text || !String(text).trim()) {
         return res.status(400).json({ error: 'team, market, week, and text are required' });
       }
-      const comments = (await kv.get(STORE_KEY)) || [];
+      const comments = (await redis.get(STORE_KEY)) || [];
       const comment = {
         id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
         team: String(team).slice(0, 200),
@@ -30,16 +72,16 @@ export default async function handler(req, res) {
         createdAt: new Date().toISOString(),
       };
       comments.push(comment);
-      await kv.set(STORE_KEY, comments);
+      await redis.set(STORE_KEY, comments);
       return res.status(200).json({ comment });
     }
 
     if (req.method === 'DELETE') {
       const { id } = req.body || {};
       if (!id) return res.status(400).json({ error: 'id is required' });
-      let comments = (await kv.get(STORE_KEY)) || [];
+      let comments = (await redis.get(STORE_KEY)) || [];
       comments = comments.filter(c => c.id !== id);
-      await kv.set(STORE_KEY, comments);
+      await redis.set(STORE_KEY, comments);
       return res.status(200).json({ ok: true });
     }
 

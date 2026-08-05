@@ -90,6 +90,15 @@ async function init() {
 
   await DataStore.load();
   await CommentsStore.load(); // non-fatal if this fails — comments feature just stays disabled
+  const commentsDot = document.getElementById('commentsStatusDot');
+  const commentsText = document.getElementById('commentsStatusText');
+  if (CommentsStore.loaded) {
+    commentsDot.className = 'status-dot ok';
+    commentsText.textContent = `Comments connected (${CommentsStore.comments.length})`;
+  } else {
+    commentsDot.className = 'status-dot err';
+    commentsText.textContent = `Comments unavailable: ${CommentsStore.loadError || 'unknown error'}`;
+  }
 
   document.getElementById('loadingOverlay').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
