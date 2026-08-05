@@ -112,8 +112,17 @@ function FilterBar(fs, spec, onAnyChange) {
     }, [f.label, selected.length ? el('span', { class: 'count' }, [String(selected.length)]) : null]);
 
     const panel = el('div', { class: 'filter-panel' + (isOpen ? ' open' : '') });
+    const allValues = f.options.map(o => o.value).filter(v => v !== f.exclusiveValue);
+    const allSelected = allValues.length > 0 && allValues.every(v => selected.includes(v));
+    const selectAllBtn = el('button', {
+      class: 'filter-clear',
+      onclick: () => {
+        fs.state[f.key] = allSelected ? [] : allValues.slice();
+        onAnyChange();
+      },
+    }, [allSelected ? 'Deselect all' : 'Select all']);
     const clearBtn = el('button', { class: 'filter-clear', onclick: () => { fs.clear(f.key); onAnyChange(); } }, ['Clear']);
-    panel.appendChild(clearBtn);
+    panel.appendChild(el('div', { class: 'filter-panel-actions' }, [selectAllBtn, clearBtn]));
     f.options.forEach(opt => {
       const checked = selected.includes(opt.value);
       const row = el('label', { class: 'filter-option' }, [
@@ -393,7 +402,9 @@ function WeekRangePicker(fs, onAnyChange) {
 // ---- Market pill row (one-click country buttons, in addition to the dropdown) --
 
 function MarketPillRow(fs, onAnyChange) {
-  const wrap = el('div', { class: 'market-pill-row' });
+  const wrap = el('div', { class: 'market-pill-group' });
+  wrap.appendChild(el('span', { class: 'week-range-title' }, ['Country']));
+  const pillRow = el('div', { class: 'market-pill-row' });
   MARKET_FILTER_OPTIONS.forEach(opt => {
     const active = fs.state.markets.includes(opt);
     const btn = el('button', {
@@ -410,8 +421,9 @@ function MarketPillRow(fs, onAnyChange) {
         onAnyChange();
       },
     }, [opt === 'FA-EU' ? 'All (EU)' : opt.replace('FA-', '')]);
-    wrap.appendChild(btn);
+    pillRow.appendChild(btn);
   });
+  wrap.appendChild(pillRow);
   return wrap;
 }
 
@@ -518,20 +530,28 @@ function renderStackedWeeklyChart(canvas, weeks, groups, groupErrorPctByWeek, ta
 
 // series: [{ label, dataByWeek: {week: value} }]
 function renderMultiLineChart(canvas, weeks, series, opts = {}) {
-  const datasets = series.map((s, i) => ({
-    label: s.label,
-    data: weeks.map(w => s.dataByWeek[w] || 0),
-    borderColor: colorForIndex(i),
-    backgroundColor: withAlpha(colorForIndex(i), 0.08),
-    borderWidth: 2.5,
-    pointRadius: 0,
-    pointHoverRadius: 5,
-    pointHoverBackgroundColor: colorForIndex(i),
-    tension: 0.3,
-    fill: false,
-  }));
+  const commentsFor = opts.commentsFor; // (seriesLabel, week) -> array of comments
+  const datasets = series.map((s, i) => {
+    const color = colorForIndex(i);
+    const pointRadius = weeks.map(w => (commentsFor && commentsFor(s.label, w).length) ? 5 : 0);
+    const pointBg = weeks.map(w => (commentsFor && commentsFor(s.label, w).length) ? '#FFC800' : color);
+    return {
+      label: s.label,
+      data: weeks.map(w => s.dataByWeek[w] || 0),
+      borderColor: color,
+      backgroundColor: withAlpha(color, 0.08),
+      borderWidth: 2.5,
+      pointRadius,
+      pointHoverRadius: weeks.map((w, i2) => Math.max(pointRadius[i2], 5)),
+      pointBackgroundColor: pointBg,
+      pointBorderColor: '#141414',
+      pointBorderWidth: pointRadius.map(r => r > 0 ? 1.5 : 0),
+      tension: 0.3,
+      fill: false,
+    };
+  });
 
-  return new Chart(canvas, {
+  const chart = new Chart(canvas, {
     type: 'line',
     data: { labels: weeks, datasets },
     options: {
@@ -543,7 +563,14 @@ function renderMultiLineChart(canvas, weeks, series, opts = {}) {
         legend: { display: true, position: 'bottom', labels: { boxWidth: 12, boxHeight: 12, padding: 14, font: { family: 'IBM Plex Sans', size: 11.5 } } },
         tooltip: {
           backgroundColor: '#141414', padding: 12, cornerRadius: 10,
-          callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)}%` },
+          callbacks: {
+            label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)}%`,
+            afterLabel: (ctx) => {
+              if (!commentsFor) return '';
+              const c = commentsFor(ctx.dataset.label, weeks[ctx.dataIndex]);
+              return c.length ? `💬 ${c.length} comment${c.length > 1 ? 's' : ''} — click point to view` : '';
+            },
+          },
         },
         targetBandPlugin: { value: opts.targetPct },
       },
@@ -551,9 +578,16 @@ function renderMultiLineChart(canvas, weeks, series, opts = {}) {
         y: { beginAtZero: true, ticks: { callback: v => v + '%' }, grid: { color: 'rgba(20,20,20,0.06)' } },
         x: { grid: { display: false } },
       },
+      onClick: opts.onPointClick ? (event) => {
+        const points = chart.getElementsAtEventForMode(event.native || event, 'nearest', { intersect: true }, false);
+        if (!points.length) return;
+        const { datasetIndex, index } = points[0];
+        opts.onPointClick(series[datasetIndex].label, weeks[index], datasets[datasetIndex].data[index]);
+      } : undefined,
     },
     plugins: [targetBandPlugin],
   });
+  return chart;
 }
 
 // ---- Composition/absolute stacked chart (e.g. delivery status per week) --------
@@ -596,14 +630,70 @@ function renderCompositionChart(canvas, weeks, groups, groupValueByWeek, mode) {
 
 // ---- Comment modal (view/add comments for a specific team/market/week cell) ----
 
-function showCommentModal({ team, market, week, onSaved }) {
+// ---- Comment hover "blurp" — a small bubble showing comment previews on hover ----
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+let _blurpEl = null;
+function ensureBlurpEl() {
+  if (!_blurpEl) {
+    _blurpEl = document.createElement('div');
+    _blurpEl.className = 'comment-blurp';
+    document.body.appendChild(_blurpEl);
+  }
+  return _blurpEl;
+}
+
+function showBlurp(targetEl, comments) {
+  const blurp = ensureBlurpEl();
+  blurp.innerHTML = '';
+  comments.slice().reverse().slice(0, 3).forEach(c => {
+    const item = document.createElement('div');
+    item.className = 'comment-blurp-item';
+    item.innerHTML = `<div class="comment-blurp-meta">${escapeHtml(c.author)} · ${new Date(c.createdAt).toLocaleDateString()}</div><div class="comment-blurp-text">${escapeHtml(c.text)}</div>`;
+    blurp.appendChild(item);
+  });
+  if (comments.length > 3) {
+    const more = document.createElement('div');
+    more.className = 'comment-blurp-more';
+    more.textContent = `+${comments.length - 3} more — click to view all`;
+    blurp.appendChild(more);
+  }
+  blurp.style.display = 'block';
+  const rect = targetEl.getBoundingClientRect();
+  const blurpRect = blurp.getBoundingClientRect();
+  let left = rect.left + rect.width / 2 - blurpRect.width / 2;
+  left = Math.max(8, Math.min(left, window.innerWidth - blurpRect.width - 8));
+  let top = rect.bottom + 8;
+  if (top + blurpRect.height > window.innerHeight - 8) top = rect.top - blurpRect.height - 8;
+  blurp.style.left = left + 'px';
+  blurp.style.top = top + 'px';
+}
+
+function hideBlurp() {
+  if (_blurpEl) _blurpEl.style.display = 'none';
+}
+
+function fmtCommentValue(value, valueType) {
+  if (value === null || value === undefined) return '';
+  if (valueType === 'pct') return fmtPct(value);
+  if (valueType === 'money') return fmtEur(value);
+  return fmtInt(value);
+}
+
+function showCommentModal({ scope, scopeLabel, entity, market, week, value, valueType, onSaved }) {
   const overlay = el('div', { class: 'modal-overlay' });
   const modal = el('div', { class: 'modal-card' });
 
   modal.appendChild(el('div', { class: 'modal-header' }, [
     el('div', {}, [
-      el('div', { class: 'modal-title' }, [team]),
-      el('div', { class: 'modal-subtitle' }, [`${market.replace('FA-', '')} · ${week}`]),
+      el('div', { class: 'modal-title' }, [entity]),
+      el('div', { class: 'modal-subtitle' }, [`${market.replace('FA-', '')} · ${week}${value !== null && value !== undefined ? ' · ' + fmtCommentValue(value, valueType) : ''}`]),
+      scopeLabel ? el('div', { class: 'modal-scope' }, [scopeLabel]) : null,
     ]),
     el('button', { class: 'modal-close', onclick: () => overlay.remove() }, ['×']),
   ]));
@@ -611,7 +701,7 @@ function showCommentModal({ team, market, week, onSaved }) {
   const listWrap = el('div', { class: 'modal-comments-list' });
   function renderList() {
     listWrap.innerHTML = '';
-    const current = CommentsStore.getFor(team, market, week);
+    const current = CommentsStore.getFor(scope, entity, market, week);
     if (!current.length) {
       listWrap.appendChild(el('div', { class: 'modal-empty' }, ['No comments yet — be the first to add context for this number.']));
     }
@@ -642,7 +732,7 @@ function showCommentModal({ team, market, week, onSaved }) {
     errorMsg.style.display = 'none';
     try {
       try { localStorage.setItem('factor-dashboard-commenter-name', author); } catch (e) { /* ignore */ }
-      await CommentsStore.add(team, market, week, text, author);
+      await CommentsStore.add({ scope, scopeLabel, entity, market, week, value, valueType, text, author });
       textArea.value = '';
       renderList();
       if (onSaved) onSaved();
@@ -680,7 +770,7 @@ function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRo
     ])]));
   }
   rows.forEach(row => {
-    const tr = el('tr', { class: row.bold ? 'pivot-bucket-row' : '' });
+    const tr = el('tr', { class: (row.bold ? 'pivot-bucket-row ' : '') + (row.indent ? 'pivot-indent-row' : '') });
     const labelTd = el('td', {
       class: (row.indent ? 'pivot-indent-cell ' : '') + (onRowClick ? 'pivot-clickable-label' : ''),
       onclick: onRowClick ? () => onRowClick(row.key) : null,
@@ -689,11 +779,14 @@ function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRo
     weeks.forEach(w => {
       const val = row.cells[w];
       const { display, cls } = cellFormatter(val, w, row.key);
-      const td = el('td', { class: 'cell-num ' + (cls || '') + (onCellClick ? ' pivot-commentable-cell' : ''), onclick: onCellClick ? () => onCellClick(row.key, w) : null }, [display]);
+      const td = el('td', { class: 'cell-num ' + (cls || '') + (onCellClick ? ' pivot-commentable-cell' : ''), onclick: onCellClick ? () => onCellClick(row.key, w, val) : null }, [display]);
       if (commentsFor) {
         const cComments = commentsFor(row.key, w);
         if (cComments && cComments.length) {
-          td.appendChild(el('span', { class: 'comment-dot', title: `${cComments.length} comment${cComments.length > 1 ? 's' : ''}` }));
+          const dot = el('span', { class: 'comment-dot' });
+          dot.addEventListener('mouseenter', () => showBlurp(dot, cComments));
+          dot.addEventListener('mouseleave', hideBlurp);
+          td.appendChild(dot);
         }
       }
       tr.appendChild(td);

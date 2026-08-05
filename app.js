@@ -9,7 +9,7 @@ const PAGES = [
   { id: 'all', label: 'All Errors', render: PageAll },
   { id: 'category', label: 'Error Category Drill Down', render: PageCategoryDrill },
   { id: 'logistics', label: 'Logistics', render: PageLogistics },
-  { id: 'datacheck', label: 'Data Check', render: PageDataCheck },
+  { id: 'comments', label: 'Comments', render: PageComments },
 ];
 
 const pageFilterStates = {}; // one isolated FilterState per page

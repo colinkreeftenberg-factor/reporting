@@ -23,7 +23,22 @@ function renderFloatingBreadcrumb(rootLabel, fs, onNavigate) {
   if (fs.drillPath.length) holder.appendChild(Breadcrumb(rootLabel, fs, onNavigate));
 }
 
-// "Team A → Category B" style label for showing exactly what a table is
+// "market" key comments are stored against: the one specific market selected,
+// or 'FA-EU' for combined/multiple — comments always work, never gated.
+function commentMarketKey(fs) {
+  return (fs.state.markets.length === 1 && fs.state.markets[0] !== 'FA-EU') ? fs.state.markets[0] : 'FA-EU';
+}
+
+// Builds the {commentsFor, onCellClick} pair to drop straight into a PivotTable
+// or chart's opts.
+function commentHooksFor(scope, scopeLabel, market, valueType, render) {
+  return {
+    commentsFor: (entity, week) => CommentsStore.getFor(scope, entity, market, week),
+    onCellClick: (entity, week, value) => {
+      showCommentModal({ scope, scopeLabel, entity, market, week, value, valueType, onSaved: render });
+    },
+  };
+}
 // currently scoped to, so it's not lost once the top-level breadcrumb scrolls
 // out of the normal page flow.
 function drillPathLabel(fs) {
@@ -187,11 +202,10 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
     container.appendChild(chartCard);
     renderStackedWeeklyChart(chartCard.querySelector('canvas'), weeks, groupKeys, groupErrorPctByWeek, target, { remainderByWeek, fixedMax });
 
-    // Comments only make unambiguous sense against ONE specific team + market +
-    // week — so this is only enabled at the team level, with a single real
-    // market selected (not FA-EU/combined, not multiple markets at once).
-    const singleMarket = (fs.state.markets.length === 1 && fs.state.markets[0] !== 'FA-EU') ? fs.state.markets[0] : null;
-    const commentsEnabled = level === 'team' && !!singleMarket && CommentsStore.loaded;
+    const market = commentMarketKey(fs);
+    const commentsEnabled = CommentsStore.loaded;
+    const breakdownHooks = commentsEnabled ? commentHooksFor('general-team', `Breakdown by ${levelLabel} · ${title}`, market, breakdownMode === 'pct' ? 'pct' : 'count', render) : {};
+    const compHooks = commentsEnabled ? commentHooksFor('general-comp', `Compensation per Week · ${title}`, market, 'money', render) : {};
 
     // ---- Table 1: per week per group (breakdown), colored vs EACH ROW'S OWN target in % mode ----
     const breakdownCard = el('div', { class: 'card' }, [
@@ -200,11 +214,9 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
           el('div', { class: 'card-title' }, [`Breakdown by ${levelLabel} — ${breakdownMode === 'pct' ? 'Error % per Week' : 'Absolute Errors per Week'}`]),
           fs.drillPath.length ? el('div', { class: 'card-path' }, [`Viewing: ${drillPathLabel(fs)}`]) : null,
           el('div', { class: 'card-desc' }, [breakdownMode === 'pct' ? (canDrillFurther ? 'Click a row to drill in · red = above that row\'s own target' : 'Red = above target') : (canDrillFurther ? 'Click a row to drill in · raw error counts, no target formatting' : 'Raw error counts, no target formatting')]),
-          level === 'team' ? el('div', { class: CommentsStore.loadError ? 'card-desc comments-error' : 'card-desc' }, [
-            CommentsStore.loadError ? `Comments unavailable: ${CommentsStore.loadError}` :
-            commentsEnabled ? 'Click a cell to view or add a comment · dot = has comments' :
-            'Select a single country above to add comments to these cells',
-          ]) : null,
+          el('div', { class: CommentsStore.loadError ? 'card-desc comments-error' : 'card-desc' }, [
+            CommentsStore.loadError ? `Comments unavailable: ${CommentsStore.loadError}` : 'Click a value cell to view or add a comment · dot = has comments',
+          ]),
         ]),
         el('div', { class: 'toggle-pill' }, [
           el('button', { class: breakdownMode === 'pct' ? 'active' : '', onclick: () => { breakdownMode = 'pct'; render(); } }, ['Error %']),
@@ -222,8 +234,8 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
         return { display: fmtPct(v), cls: (rt === null || rt === undefined) ? '' : (v > rt ? 'cell-pct-bad' : 'cell-pct-good') };
       },
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
-      commentsFor: commentsEnabled ? (team, w) => CommentsStore.getFor(team, singleMarket, w) : null,
-      onCellClick: commentsEnabled ? (team, w) => { showCommentModal({ team, market: singleMarket, week: w, onSaved: render }); } : null,
+      commentsFor: breakdownHooks.commentsFor,
+      onCellClick: breakdownHooks.onCellClick,
       totalsRow: {
         cells: weeks.reduce((acc, w) => {
           const totalErrors = groupKeys.reduce((s, k) => s + cellOrZero(matrix, k, w).errorCount, 0);
@@ -260,6 +272,8 @@ function buildTeamRatesPage(container, fs, { title, subtitle, teamScope }) {
       rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = compValueFor(cellOrZero(matrix, k, w)); return acc; }, {}) })),
       cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v), cls: '' }),
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
+      commentsFor: compHooks.commentsFor,
+      onCellClick: compHooks.onCellClick,
       totalsRow: {
         cells: weeks.reduce((acc, w) => {
           const totalComp = groupKeys.reduce((s, k) => s + cellOrZero(matrix, k, w).compensationTotal, 0);
@@ -385,100 +399,6 @@ function PageRecipe(container, fs) {
   render();
 }
 
-// ---- Diagnostic: Data Check ----------------------------------------------------
-// Shows exactly what box-count denominator the app is using per week, straight
-// from GrowthModel, next to the raw error count from the EU sheet for that
-// week — so a collapsed/missing box count for a given week is immediately
-// visible instead of hiding inside a % calculation.
-
-function PageDataCheck(container, fs) {
-  function render() { preserveScroll(renderInner); }
-
-  function renderInner() {
-    container.innerHTML = '';
-    setPageHeader('Data Check', 'Raw box counts and error counts per week — for spotting bad denominators');
-
-    const weeks = DataStore.weeks;
-    const allRows = DataStore.rawRows;
-
-    if (DataStore.growthModelColumnMap) {
-      const { weekKey, resolvedCols, totalKey, allHeaders } = DataStore.growthModelColumnMap;
-      const missing = Object.entries(resolvedCols).filter(([, v]) => !v).map(([k]) => k);
-      container.appendChild(el('div', { class: missing.length ? 'error-banner' : 'config-banner' }, [
-        el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['GrowthModel column mapping']),
-        el('div', { style: 'margin-bottom:8px;' }, [`Every column header actually found in your GrowthModel CSV: ${allHeaders.map(h => `"${h}"`).join(', ')}`]),
-        `Week column read from "${weekKey}". `,
-        Object.entries(resolvedCols).map(([fa, col]) => `${fa} ← ${col ? `"${col}"` : 'NOT FOUND'}`).join('  ·  '),
-        `  ·  Total ← ${totalKey ? `"${totalKey}"` : '(summed from the 5 market columns above)'}`,
-        missing.length ? ` — ${missing.join(', ')} could not be matched to any column above, so that market's box count is reading as 0.` : '',
-      ]));
-    }
-
-    // Hard invariant check: a single market's box count can never legitimately
-    // exceed the combined total. If it does, or if the 5 markets don't sum to
-    // the total column, the column mapping above is wrong — this makes that
-    // undeniable instead of inferred from a percentage looking "off".
-    const mismatchRows = weeks.map(w => {
-      const gm = DataStore.growthModel[w];
-      if (!gm) return null;
-      const sumOfFive = gm['FA-NL'] + gm['FA-BE'] + gm['FA-SE'] + gm['FA-DK'] + gm['FA-DE'];
-      return { week: w, sumOfFive, total: gm['FA-EU'], mismatch: Math.abs(sumOfFive - gm['FA-EU']) > 1 };
-    }).filter(Boolean);
-    const anyMismatch = mismatchRows.some(r => r.mismatch);
-    if (anyMismatch) {
-      container.appendChild(el('div', { class: 'error-banner' }, [
-        el('div', { style: 'font-weight:700; margin-bottom:6px;' }, ['NL+BE+SE+DK+DE does not equal the Total column']),
-        'This means the column mapping above is picking up the wrong column(s) for at least one market. Weeks affected: ' +
-        mismatchRows.filter(r => r.mismatch).map(r => `${r.week} (sum=${fmtInt(r.sumOfFive)} vs total=${fmtInt(r.total)})`).join(', '),
-      ]));
-    }
-
-    const rows = weeks.map(w => {
-      const gm = DataStore.growthModel[w];
-      const wErrors = allRows.filter(r => r.week === w).length;
-      const wComp = allRows.filter(r => r.week === w).reduce((s, r) => s + r.compensation, 0);
-      return {
-        week: w,
-        hasGrowthModelRow: !!gm,
-        nl: gm ? gm['FA-NL'] : 0, be: gm ? gm['FA-BE'] : 0, se: gm ? gm['FA-SE'] : 0,
-        dk: gm ? gm['FA-DK'] : 0, de: gm ? gm['FA-DE'] : 0, total: gm ? gm['FA-EU'] : 0,
-        errors: wErrors, compensation: wComp,
-        errorPct: gm && gm['FA-EU'] > 0 ? (wErrors / gm['FA-EU']) * 100 : null,
-      };
-    });
-
-    // Flag weeks whose box total looks suspiciously low relative to the
-    // typical week, since that's the failure mode that produces inflated %s.
-    const totals = rows.map(r => r.total).filter(t => t > 0).sort((a, b) => a - b);
-    const median = totals.length ? totals[Math.floor(totals.length / 2)] : 0;
-
-    const card = el('div', { class: 'card' }, [
-      el('div', { class: 'card-header' }, [
-        el('div', {}, [el('div', { class: 'card-title' }, ['Per-Week Data Trace']), el('div', { class: 'card-desc' }, [`Median weekly box total across all markets: ${fmtInt(median)} · rows shaded red are under 20% of that median, or missing from GrowthModel entirely`])]),
-      ]),
-    ]);
-
-    const headers = ['Week', 'Found in GrowthModel?', 'NL', 'BE', 'SE', 'DK', 'DE', 'Total Boxes', 'Errors (EU sheet)', 'Error %'];
-    const table = el('table', { class: 'data-table' });
-    table.appendChild(el('thead', {}, [el('tr', {}, headers.map(h => el('th', {}, [h])))]));
-    const tbody = el('tbody');
-    rows.forEach(r => {
-      const suspicious = !r.hasGrowthModelRow || (median > 0 && r.total < median * 0.2);
-      const tr = el('tr', suspicious ? { style: 'background:rgba(255,88,93,0.12);' } : {});
-      tr.appendChild(el('td', {}, [r.week]));
-      tr.appendChild(el('td', {}, [r.hasGrowthModelRow ? 'Yes' : 'NO — missing week']));
-      [r.nl, r.be, r.se, r.dk, r.de, r.total].forEach(v => tr.appendChild(el('td', { class: 'cell-num' }, [fmtInt(v)])));
-      tr.appendChild(el('td', { class: 'cell-num' }, [fmtInt(r.errors)]));
-      tr.appendChild(el('td', { class: 'cell-num' }, [r.errorPct === null ? '—' : fmtPct(r.errorPct)]));
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    card.appendChild(el('div', { class: 'table-scroll' }, [table]));
-    container.appendChild(card);
-  }
-  render();
-}
-
 function PageCategoryDrill(container, fs) {
   const allRows = DataStore.rawRows;
   let breakdownMode = 'pct'; // 'pct' | 'absolute'
@@ -519,6 +439,12 @@ function PageCategoryDrill(container, fs) {
 
     renderFloatingBreadcrumb('All Categories', fs, render);
 
+    const market = commentMarketKey(fs);
+    const commentsEnabled = CommentsStore.loaded;
+    const catBreakdownHooks = commentsEnabled ? commentHooksFor('category-drill', `${levelLabel} · Error Category Drill Down`, market, breakdownMode === 'pct' ? 'pct' : 'count', render) : {};
+    const catCompHooks = commentsEnabled ? commentHooksFor('category-drill-comp', `${levelLabel} · Compensation`, market, 'money', render) : {};
+    const catMarketHooks = commentsEnabled ? commentHooksFor('category-drill-market', `Market Comparison · ${drillPathLabel(fs) || 'All Categories'}`, 'FA-EU', 'pct', render) : {};
+
     if (!groupKeys.length) {
       container.appendChild(el('div', { class: 'card' }, [el('div', { class: 'empty-state' }, [el('div', { class: 'icon' }, ['—']), 'No rows match the current filters.'])]));
       return;
@@ -555,6 +481,8 @@ function PageCategoryDrill(container, fs) {
       rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = breakdownMode === 'pct' ? matrix[k][w].errorPct : matrix[k][w].errorCount; return acc; }, {}) })),
       cellFormatter: (v) => breakdownMode === 'pct' ? { display: fmtPct(v), cls: '' } : { display: fmtInt(v), cls: '' },
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
+      commentsFor: catBreakdownHooks.commentsFor,
+      onCellClick: catBreakdownHooks.onCellClick,
       totalsRow: {
         cells: weeks.reduce((acc, w) => {
           acc[w] = groupKeys.reduce((s, k) => s + (breakdownMode === 'pct' ? matrix[k][w].errorPct : matrix[k][w].errorCount), 0);
@@ -586,6 +514,8 @@ function PageCategoryDrill(container, fs) {
       rows: groupKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = catCompValueFor(matrix[k][w]); return acc; }, {}) })),
       cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v), cls: '' }),
       onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
+      commentsFor: catCompHooks.commentsFor,
+      onCellClick: catCompHooks.onCellClick,
       totalsRow: {
         cells: weeks.reduce((acc, w) => {
           const totalComp = groupKeys.reduce((s, k) => s + matrix[k][w].compensationTotal, 0);
@@ -616,6 +546,8 @@ function PageCategoryDrill(container, fs) {
         weeks,
         rows: marketRows,
         cellFormatter: (v) => ({ display: fmtPct(v), cls: '' }),
+        commentsFor: catMarketHooks.commentsFor,
+        onCellClick: catMarketHooks.onCellClick,
       }));
       container.appendChild(marketCard);
     }
@@ -713,6 +645,13 @@ function PageLogistics(container, fs) {
     const issueKeys = orderGroupsByImpact(issueMatrix, weeks);
 
     renderFloatingBreadcrumb('All Subcategories', fs, render);
+    const market = commentMarketKey(fs);
+    const commentsEnabled = CommentsStore.loaded;
+    const issueHooks = commentsEnabled ? commentHooksFor('logistics-issue', `${levelLabel} · Logistics`, market, issueMode === 'pct' ? 'pct' : 'count', render) : {};
+    const carrierBreakdownHooksFor = (carrier) => commentsEnabled ? commentHooksFor('logistics-carrier', `${carrier} · ${levelLabel} · Logistics`, market, issueMode === 'pct' ? 'pct' : 'count', render) : {};
+    const carrierLineHooks = commentsEnabled ? { commentsFor: (carrier, w) => CommentsStore.getFor('logistics-carrier-line', carrier, market, w) } : {};
+    const compLogisticsHooks = commentsEnabled ? commentHooksFor('logistics-compensation', 'Compensation per Carrier · Logistics', market, 'money', render) : {};
+
     container.appendChild(el('div', { style: 'display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px;' }, [
       el('div', { class: 'toggle-pill' }, [
         el('button', { class: issueMode === 'pct' ? 'active' : '', onclick: () => { issueMode = 'pct'; render(); } }, ['Error %']),
@@ -778,6 +717,8 @@ function PageLogistics(container, fs) {
       rows: table1Rows,
       cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v), cls: '' } : { display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : 'cell-pct-good' },
       onRowClick: (!inCarrierView && canDrillFurther) ? (key) => { fs.pushDrill(level, key); render(); } : null,
+      commentsFor: issueHooks.commentsFor,
+      onCellClick: issueHooks.onCellClick,
       totalsRow: {
         cells: weeks.reduce((acc, w) => { acc[w] = issueKeys.reduce((s, k) => s + (issueMode === 'pct' ? issueMatrix[k][w].errorPct : issueMatrix[k][w].errorCount), 0); return acc; }, {}),
         cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v) } : { display: fmtPct(v), cls: (target !== null && target !== undefined && v > target) ? 'cell-pct-bad' : '' },
@@ -797,7 +738,13 @@ function PageLogistics(container, fs) {
       el('div', { class: 'chart-wrap' }, [el('canvas')]),
     ]);
     container.appendChild(chart2Card);
-    renderMultiLineChart(chart2Card.querySelector('canvas'), weeks, carrierSeries, { targetPct: target });
+    renderMultiLineChart(chart2Card.querySelector('canvas'), weeks, carrierSeries, {
+      targetPct: target,
+      commentsFor: carrierLineHooks.commentsFor,
+      onPointClick: commentsEnabled ? (carrier, w, value) => {
+        showCommentModal({ scope: 'logistics-carrier-line', scopeLabel: 'Error % per Carrier per Week · Logistics', entity: carrier, market, week: w, value, valueType: 'pct', onSaved: render });
+      } : undefined,
+    });
 
     // ---- Section 4: per-carrier breakdown cards, same drill level and toggle as above ----
     const carrierGroup = el('div', { class: 'carrier-group' }, [
@@ -816,12 +763,15 @@ function PageLogistics(container, fs) {
           el('div', { class: 'card-title' }, [`${carrier}  |  ${fmtInt(carrierErrorCount)} errors  |  ${fmtEur(carrierComp)} compensation`]),
         ]),
       ]);
+      const cHooks = carrierBreakdownHooksFor(carrier);
       card.appendChild(PivotTable({
         rowLabel: levelLabel,
         weeks,
         rows: cKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? cMatrix[k][w].errorPct : cMatrix[k][w].errorCount; return acc; }, {}) })),
         cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v), cls: '' } : { display: fmtPct(v), cls: '' },
         onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
+        commentsFor: cHooks.commentsFor,
+        onCellClick: cHooks.onCellClick,
         totalsRow: {
           cells: weeks.reduce((acc, w) => { acc[w] = cKeys.reduce((s, k) => s + (issueMode === 'pct' ? cMatrix[k][w].errorPct : cMatrix[k][w].errorCount), 0); return acc; }, {}),
           cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v) } : { display: fmtPct(v) },
@@ -879,6 +829,8 @@ function PageLogistics(container, fs) {
       weeks,
       rows: carrierKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = compValueFor(carrierMatrix[k][w]); return acc; }, {}) })),
       cellFormatter: (v) => ({ display: compensationMode === 'total' ? fmtEur(v) : fmtEurPrecise(v), cls: '' }),
+      commentsFor: compLogisticsHooks.commentsFor,
+      onCellClick: compLogisticsHooks.onCellClick,
       totalsRow: {
         cells: weeks.reduce((acc, w) => {
           const totalComp = carrierKeys.reduce((s, k) => s + carrierMatrix[k][w].compensationTotal, 0);
@@ -891,6 +843,62 @@ function PageLogistics(container, fs) {
       },
     }));
     container.appendChild(compCard);
+  }
+  render();
+}
+
+// ---- Page: Comments overview -----------------------------------------------------
+
+function PageComments(container, fs) {
+  function render() { preserveScroll(renderInner); }
+
+  function renderInner() {
+    container.innerHTML = '';
+    setPageHeader('Comments', 'Every comment across the dashboard, oldest week first');
+
+    if (!CommentsStore.loaded) {
+      container.appendChild(el('div', { class: 'card' }, [el('div', { class: 'empty-state' }, [
+        el('div', { class: 'icon' }, ['—']),
+        CommentsStore.loadError ? `Comments unavailable: ${CommentsStore.loadError}` : 'Loading comments…',
+      ])]));
+      return;
+    }
+
+    if (!CommentsStore.comments.length) {
+      container.appendChild(el('div', { class: 'card' }, [el('div', { class: 'empty-state' }, [
+        el('div', { class: 'icon' }, ['—']),
+        'No comments yet. Click any value cell (or a point on the carrier line chart) in the other tabs to add one.',
+      ])]));
+      return;
+    }
+
+    const sorted = [...CommentsStore.comments].sort((a, b) => weekSortKey(a.week) - weekSortKey(b.week) || new Date(a.createdAt) - new Date(b.createdAt));
+    const rows = sorted.map(c => ({
+      ...c,
+      marketDisplay: c.market.replace('FA-', ''),
+      valueDisplay: fmtCommentValue(c.value, c.valueType),
+      whenDisplay: new Date(c.createdAt).toLocaleString(),
+    }));
+
+    const card = el('div', { class: 'card' }, [
+      el('div', { class: 'card-header' }, [
+        el('div', {}, [el('div', { class: 'card-title' }, [`All Comments (${rows.length})`]), el('div', { class: 'card-desc' }, ['Sorted by week, oldest to newest · click a column header to re-sort'])]),
+      ]),
+    ]);
+    card.appendChild(DataTable({
+      columns: [
+        { key: 'week', label: 'Week' },
+        { key: 'scopeLabel', label: 'Where' },
+        { key: 'entity', label: 'Entity' },
+        { key: 'marketDisplay', label: 'Market' },
+        { key: 'valueDisplay', label: 'Value', numeric: true },
+        { key: 'text', label: 'Comment' },
+        { key: 'author', label: 'Author' },
+        { key: 'whenDisplay', label: 'When' },
+      ],
+      rows,
+    }));
+    container.appendChild(card);
   }
   render();
 }

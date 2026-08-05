@@ -268,15 +268,16 @@ button{font-family:inherit;}
 .filter-option:hover{background:var(--surface-sunken);}
 .filter-option input{accent-color:var(--saffron); width:15px; height:15px;}
 .filter-clear{
-  margin-left:auto; font-size:12.5px; color:var(--text-secondary); background:none; border:none; cursor:pointer;
+  font-size:12.5px; color:var(--text-secondary); background:none; border:none; cursor:pointer;
   text-decoration:underline; padding:6px 8px;
 }
 .filter-clear:hover{color:var(--text-primary);}
+.filter-panel-actions{display:flex; justify-content:space-between; margin-bottom:6px; padding-bottom:6px; border-bottom:1px solid var(--border);}
 
 /* ---------- Top filter row (week picker + country pills side by side) ---------- */
 .top-filter-row{display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap; margin-bottom:14px;}
 .top-filter-row .week-range-picker{margin-bottom:0;}
-.top-filter-row .market-pill-row{margin-bottom:0; align-items:center;}
+.top-filter-row .market-pill-group{margin-bottom:0;}
 
 /* ---------- Week range picker (compact, inline dropdowns) ---------- */
 .week-range-picker{
@@ -336,9 +337,14 @@ button{font-family:inherit;}
 .carrier-group .card:last-child{margin-bottom:0;}
 
 /* ---------- Market pill row ---------- */
-.market-pill-row{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
+.market-pill-group{
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+  padding:10px 16px; box-shadow:var(--shadow-card);
+}
+.market-pill-row{display:flex; flex-wrap:wrap; gap:8px;}
 .market-pill{
-  padding:9px 16px; border-radius:999px; border:1px solid var(--border); background:var(--surface);
+  padding:9px 16px; border-radius:999px; border:1px solid var(--border); background:var(--surface-sunken);
   font-size:13.5px; font-weight:600; color:var(--text-primary); cursor:pointer; transition:all .15s ease;
 }
 .market-pill:hover{border-color:var(--text-tertiary);}
@@ -391,6 +397,8 @@ table.data-table tbody tr.pivot-totals-row{background:var(--surface-sunken); fon
 table.data-table tbody tr.pivot-totals-row td{color:var(--text-primary);}
 table.data-table tbody tr.pivot-bucket-row{background:rgba(20,20,20,0.035); font-weight:700;}
 table.data-table tbody td.pivot-indent-cell{padding-left:32px; font-weight:400; color:var(--text-secondary);}
+tr.pivot-indent-row td.cell-pct-bad{background:rgba(255,88,93,0.05); font-weight:400; color:var(--cherry);}
+tr.pivot-indent-row td.cell-pct-good{background:rgba(117,194,109,0.06); font-weight:400; color:var(--basil);}
 table.data-table tbody td.pivot-clickable-label{cursor:pointer;}
 table.data-table tbody td.pivot-clickable-label:hover{text-decoration:underline;}
 
@@ -399,8 +407,19 @@ td.pivot-commentable-cell{cursor:pointer; position:relative;}
 td.pivot-commentable-cell:hover{background:rgba(255,200,0,0.10);}
 .comment-dot{
   display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--saffron);
-  margin-left:6px; vertical-align:middle; box-shadow:0 0 0 2px rgba(255,200,0,0.25);
+  margin-left:6px; vertical-align:middle; box-shadow:0 0 0 2px rgba(255,200,0,0.25); cursor:pointer;
 }
+.comment-blurp{
+  display:none; position:fixed; z-index:200; max-width:280px;
+  background:var(--carbon); color:var(--natural); border-radius:var(--radius-md);
+  padding:10px 12px; box-shadow:var(--shadow-hover); font-size:12.5px; pointer-events:none;
+}
+.comment-blurp-item{padding:6px 0; border-bottom:1px solid rgba(241,241,234,0.12);}
+.comment-blurp-item:last-child{border-bottom:none;}
+.comment-blurp-meta{font-size:10.5px; font-weight:700; color:var(--saffron); margin-bottom:2px;}
+.comment-blurp-text{line-height:1.4;}
+.comment-blurp-more{font-size:11px; color:rgba(241,241,234,0.6); padding-top:6px; font-style:italic;}
+.modal-scope{font-size:11px; color:var(--text-tertiary); margin-top:2px; text-transform:uppercase; letter-spacing:.04em;}
 .modal-overlay{
   position:fixed; inset:0; background:rgba(20,20,20,0.55); z-index:100;
   display:flex; align-items:center; justify-content:center; padding:20px;

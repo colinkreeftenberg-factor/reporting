@@ -1,8 +1,13 @@
 /* ============================================================
    COMMENTS STORE
-   Team/market/week comments, persisted server-side via /api/comments
-   (a Vercel serverless function backed by Vercel KV). Comments are
-   shared across everyone viewing the dashboard, not per-browser.
+   Comments across every table (team, subcategory, carrier,
+   compensation, etc.), persisted server-side via /api/comments
+   (Vercel serverless function + Upstash Redis). Shared across
+   everyone viewing the dashboard, not per-browser.
+
+   Each comment is a snapshot: it stores the value/valueType shown
+   at the moment it was added, so later pages (like the Comments
+   overview) can display it without recomputing anything.
    ============================================================ */
 
 const CommentsStore = {
@@ -26,15 +31,15 @@ const CommentsStore = {
     }
   },
 
-  getFor(team, market, week) {
-    return this.comments.filter(c => c.team === team && c.market === market && c.week === week);
+  getFor(scope, entity, market, week) {
+    return this.comments.filter(c => c.scope === scope && c.entity === entity && c.market === market && c.week === week);
   },
 
-  async add(team, market, week, text, author) {
+  async add({ scope, scopeLabel, entity, market, week, value, valueType, text, author }) {
     const res = await fetch('/api/comments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ team, market, week, text, author }),
+      body: JSON.stringify({ scope, scopeLabel, entity, market, week, value, valueType, text, author }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));

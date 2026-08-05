@@ -1,10 +1,17 @@
-// Vercel serverless function backing the team-comments feature.
+// Vercel serverless function backing the comments feature.
+// Uses @upstash/redis directly for flexible env var detection (see findEnv).
 //
-// Uses @upstash/redis directly (not @vercel/kv) because Vercel Marketplace
-// "Upstash for Redis"/KV integrations don't always name their environment
-// variables the way the older @vercel/kv package expects. This searches for
-// any plausible variable name so it works regardless of how your specific
-// integration named things (e.g. "upstash-kv-aero-bucket" style prefixes).
+// Schema: { id, scope, scopeLabel, entity, market, week, value, valueType,
+//           text, author, createdAt }
+// - scope: which table/context the comment belongs to (e.g. 'general-team',
+//   'logistics-issue', 'logistics-carrier', 'logistics-compensation',
+//   'category-drill') — prevents an entity name collision across contexts
+//   (e.g. a team and a carrier both happening to be named the same thing).
+// - entity: the row label (team, subcategory, carrier, complaint, etc.)
+// - market: a specific market code (e.g. 'FA-NL') or 'FA-EU' for combined view.
+// - value/valueType: a SNAPSHOT of the number shown when the comment was
+//   added ('pct' | 'money' | 'count'), so the comments overview can display
+//   it without needing to recompute anything later.
 import { Redis } from '@upstash/redis';
 
 const STORE_KEY = 'factor-team-comments';
@@ -13,9 +20,6 @@ function findEnv(...candidates) {
   for (const name of candidates) {
     if (process.env[name]) return process.env[name];
   }
-  // Fall back to searching for ANY env var whose name ends with a matching
-  // suffix, to handle store-name-prefixed variants like
-  // "AERO_BUCKET_KV_REST_API_URL" or "UPSTASH_KV_AERO_BUCKET_REST_API_URL".
   for (const name of candidates) {
     const found = Object.keys(process.env).find(k => k.endsWith(name));
     if (found) return process.env[found];
@@ -39,9 +43,6 @@ function getRedisClientOrThrow() {
 
 export default async function handler(req, res) {
   try {
-    // Visit /api/comments?debug=1 to see which env vars were detected,
-    // without exposing their values — useful for confirming the connection
-    // without needing to check Vercel's function logs.
     if (req.method === 'GET' && req.query && req.query.debug) {
       const relevantKeys = Object.keys(process.env).filter(k => /KV|REDIS|UPSTASH/i.test(k)).sort();
       let clientOk = false, clientError = null;
@@ -57,16 +58,20 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { team, market, week, text, author } = req.body || {};
-      if (!team || !market || !week || !text || !String(text).trim()) {
-        return res.status(400).json({ error: 'team, market, week, and text are required' });
+      const { scope, scopeLabel, entity, market, week, value, valueType, text, author } = req.body || {};
+      if (!scope || !entity || !market || !week || !text || !String(text).trim()) {
+        return res.status(400).json({ error: 'scope, entity, market, week, and text are required' });
       }
       const comments = (await redis.get(STORE_KEY)) || [];
       const comment = {
         id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
-        team: String(team).slice(0, 200),
+        scope: String(scope).slice(0, 60),
+        scopeLabel: String(scopeLabel || scope).slice(0, 120),
+        entity: String(entity).slice(0, 200),
         market: String(market).slice(0, 20),
         week: String(week).slice(0, 20),
+        value: typeof value === 'number' ? value : null,
+        valueType: valueType ? String(valueType).slice(0, 20) : null,
         text: String(text).slice(0, 2000),
         author: (author ? String(author) : 'Anonymous').slice(0, 100),
         createdAt: new Date().toISOString(),
