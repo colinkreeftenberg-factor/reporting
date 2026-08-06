@@ -784,9 +784,9 @@ function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRo
         const cComments = commentsFor(row.key, w);
         if (cComments && cComments.length) {
           const dot = el('span', { class: 'comment-dot' });
-          dot.addEventListener('mouseenter', () => showBlurp(dot, cComments));
-          dot.addEventListener('mouseleave', hideBlurp);
           td.appendChild(dot);
+          td.addEventListener('mouseenter', () => showBlurp(td, cComments));
+          td.addEventListener('mouseleave', hideBlurp);
         }
       }
       tr.appendChild(td);
