@@ -40,7 +40,7 @@ const TARGETS = {
   'Production - Pick & Pack': { EU: 0.50, NL: 0.50, BE: 0.50, SE: 0.50, DK: 0.50, DE: 0.50 },
   'Production - Cooking':     { EU: 0.50, NL: 0.50, BE: 0.50, SE: 0.50, DK: 0.50, DE: 0.50 },
   'Packaging':                { EU: 0.10, NL: 0.10, BE: 0.10, SE: 0.10, DK: 0.10, DE: 0.10 },
-  'Last Mile':                { EU: 1.50, NL: 0.60, BE: 0.60, SE: 2.50, DK: 2.50, DE: 2.50 },
+  'Last Mile':                { EU: 1.50, NL: 0.60, BE: 0.60, SE: 1.50, DK: 1.50, DE: 1.50 },
   'Strategic Procurement':    { EU: 0.50, NL: 1.00, BE: 1.00, SE: 1.00, DK: 1.00, DE: 1.00 },
   'Food Safety':              { EU: 0.50, NL: 0.20, BE: 0.20, SE: 0.20, DK: 0.20, DE: 1.00 },
 };
