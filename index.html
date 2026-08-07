@@ -491,6 +491,31 @@ td.pivot-commentable-cell:hover{background:rgba(255,200,0,0.10);}
 }
 .config-banner code{background:rgba(20,20,20,0.06); padding:2px 6px; border-radius:5px; font-family:monospace;}
 
+/* ---------- Table download button ---------- */
+.table-dl-toolbar{display:flex; justify-content:flex-end; padding:0 0 4px 0;}
+.table-dl-wrap{position:relative; display:inline-flex;}
+.table-dl-btn{
+  width:26px; height:26px; border-radius:7px;
+  border:1px solid var(--border); background:var(--surface-sunken);
+  color:var(--text-secondary); cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  padding:0; transition:border-color .15s, color .15s, background .15s;
+}
+.table-dl-btn:hover{border-color:var(--text-tertiary); color:var(--text-primary); background:var(--surface);}
+.table-dl-menu{
+  display:none; position:absolute; top:calc(100% + 5px); right:0; z-index:50;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);
+  box-shadow:var(--shadow-hover); padding:4px; min-width:148px;
+}
+.table-dl-menu.open{display:block;}
+.table-dl-option{
+  display:block; width:100%; text-align:left; padding:8px 12px;
+  font-size:13px; font-weight:500; color:var(--text-primary);
+  background:none; border:none; border-radius:8px; cursor:pointer;
+  transition:background .12s ease;
+}
+.table-dl-option:hover{background:var(--surface-sunken);}
+
 /* ---------- Responsive ---------- */
 @media(max-width:900px){
   .sidebar{transform:translateX(-100%);}

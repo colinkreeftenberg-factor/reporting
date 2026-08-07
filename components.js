@@ -757,6 +757,7 @@ function showCommentModal({ scope, scopeLabel, entity, market, week, value, valu
 
 // rows: [{ key, cells: { week: number } }]; cellFormatter(value) -> {display, cls}
 function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRow, commentsFor, onCellClick }) {
+  const outer = el('div');
   const wrap = el('div', { class: 'table-scroll' });
   const table = el('table', { class: 'data-table' });
   const thead = el('thead');
@@ -805,13 +806,16 @@ function PivotTable({ rowLabel, weeks, rows, cellFormatter, onRowClick, totalsRo
   }
   table.appendChild(tbody);
   wrap.appendChild(table);
-  return wrap;
+  outer.appendChild(tableDownloadButton(table));
+  outer.appendChild(wrap);
+  return outer;
 }
 
 // columns: [{key,label,align,numeric,pct}], rows: array of plain objects
 // onRowClick(row) optional -> enables drill-through
 function DataTable({ columns, rows, onRowClick, targetPct }) {
   let sortKey = null, sortDir = 1;
+  const outer = el('div');
   const wrap = el('div', { class: 'table-scroll' });
   const table = el('table', { class: 'data-table' });
 
@@ -871,7 +875,173 @@ function DataTable({ columns, rows, onRowClick, targetPct }) {
 
   renderTable();
   wrap.appendChild(table);
-  return wrap;
+  outer.appendChild(tableDownloadButton(table));
+  outer.appendChild(wrap);
+  return outer;
+}
+
+// ---- Table download (PNG + CSV) -----------------------------------------------
+
+// One global listener closes any open download menu when clicking outside.
+document.addEventListener('click', () => {
+  document.querySelectorAll('.table-dl-menu.open').forEach(m => m.classList.remove('open'));
+});
+
+function _tableDownloadAsCsv(tableEl, filename) {
+  const rows = [];
+  tableEl.querySelectorAll('tr').forEach(tr => {
+    const cells = Array.from(tr.querySelectorAll('th, td'));
+    const values = cells.map(c => {
+      const text = c.textContent.trim().replace(/ /g, ' ');
+      return /[,"\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+    });
+    if (values.length) rows.push(values.join(','));
+  });
+  const csv = '﻿' + rows.join('\r\n'); // BOM so Excel opens UTF-8 correctly
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (filename || 'table').replace(/[^a-z0-9_-]/gi, '_') + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function _tableDownloadAsPng(tableEl, filename) {
+  const scale = 2;
+  const pad = 24;
+  const titleH = 36;
+
+  // Reset scroll so sticky headers are in their natural position while measuring.
+  const scrollWrap = tableEl.closest('.table-scroll');
+  const savedLeft = scrollWrap ? scrollWrap.scrollLeft : 0;
+  const savedTop = scrollWrap ? scrollWrap.scrollTop : 0;
+  if (scrollWrap) { scrollWrap.scrollLeft = 0; scrollWrap.scrollTop = 0; }
+
+  const tableRect = tableEl.getBoundingClientRect();
+  const W = tableRect.width + pad * 2;
+  const H = tableRect.height + pad * 2 + titleH;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(W * scale);
+  canvas.height = Math.round(H * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+
+  // White base
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title strip
+  ctx.fillStyle = '#f6f5f0';
+  ctx.fillRect(0, 0, W, titleH);
+  if (filename) {
+    ctx.fillStyle = '#141414';
+    ctx.font = "600 12px 'IBM Plex Sans', system-ui, sans-serif";
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(filename, pad, titleH / 2);
+  }
+
+  // Walk up to find the first non-transparent background color.
+  const findBg = (node) => {
+    while (node && node !== tableEl.parentElement) {
+      const bg = getComputedStyle(node).backgroundColor;
+      if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+      node = node.parentElement;
+    }
+    return '#ffffff';
+  };
+
+  tableEl.querySelectorAll('th, td').forEach(cell => {
+    const rect = cell.getBoundingClientRect();
+    const x = rect.left - tableRect.left + pad;
+    const y = rect.top - tableRect.top + pad + titleH;
+    const w = rect.width;
+    const h = rect.height;
+    if (w <= 0 || h <= 0) return;
+
+    const style = getComputedStyle(cell);
+
+    ctx.fillStyle = findBg(cell);
+    ctx.fillRect(x, y, w, h);
+
+    ctx.strokeStyle = 'rgba(20,20,20,0.07)';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(x + 0.25, y + 0.25, w - 0.5, h - 0.5);
+
+    const isBold = parseFloat(style.fontWeight) >= 600;
+    ctx.font = `${isBold ? '600' : '400'} 11px 'IBM Plex Sans', system-ui, sans-serif`;
+    ctx.fillStyle = style.color;
+    ctx.textBaseline = 'middle';
+
+    const isNum = cell.classList.contains('cell-num');
+    ctx.textAlign = isNum ? 'right' : 'left';
+
+    // Truncate text to fit within the cell (minus padding).
+    const maxW = w - 16;
+    let text = cell.textContent.trim();
+    while (text.length > 1 && ctx.measureText(text).width > maxW) text = text.slice(0, -1);
+    if (text !== cell.textContent.trim()) text = text.slice(0, -1) + '…';
+
+    ctx.fillText(text, isNum ? x + w - 8 : x + 8, y + h / 2);
+  });
+
+  if (scrollWrap) { scrollWrap.scrollLeft = savedLeft; scrollWrap.scrollTop = savedTop; }
+
+  canvas.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (filename || 'table').replace(/[^a-z0-9_-]/gi, '_') + '.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }, 'image/png');
+}
+
+// Builds a small toolbar with a download icon button + PNG/CSV dropdown.
+// Placed above the table-scroll wrapper returned by PivotTable / DataTable.
+function tableDownloadButton(tableEl) {
+  const toolbar = el('div', { class: 'table-dl-toolbar' });
+  const wrap = el('div', { class: 'table-dl-wrap' });
+
+  // Lazily read the card title at click time so we always get the current label.
+  const getLabel = () => {
+    const cardTitle = tableEl.closest('.card') && tableEl.closest('.card').querySelector('.card-title');
+    if (cardTitle) return cardTitle.textContent.trim();
+    const groupTitle = tableEl.closest('.carrier-group') && tableEl.closest('.carrier-group').querySelector('.carrier-group-title');
+    if (groupTitle) return groupTitle.textContent.trim();
+    return 'table';
+  };
+
+  const iconSvg = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M6 1.5v6M3.5 5 6 7.5 8.5 5M2 10.5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  const menu = el('div', { class: 'table-dl-menu' });
+  [
+    { text: 'Download PNG', action: () => _tableDownloadAsPng(tableEl, getLabel()) },
+    { text: 'Download CSV', action: () => _tableDownloadAsCsv(tableEl, getLabel()) },
+  ].forEach(({ text, action }) => {
+    menu.appendChild(el('button', {
+      class: 'table-dl-option',
+      onclick: (e) => { e.stopPropagation(); menu.classList.remove('open'); action(); },
+    }, [text]));
+  });
+
+  const btn = el('button', {
+    class: 'table-dl-btn',
+    title: 'Download table',
+    html: iconSvg,
+    onclick: (e) => { e.stopPropagation(); menu.classList.toggle('open'); },
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(menu);
+  toolbar.appendChild(wrap);
+  return toolbar;
 }
 
 // ---- Skeleton / empty helpers -------------------------------------------------
