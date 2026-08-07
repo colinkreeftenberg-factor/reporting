@@ -296,10 +296,13 @@ function aggregate(rows, weeks, markets) {
 // Builds { [groupKey]: { [week]: {errorCount, compensationTotal, errorPct, compPerBox} } }
 // Every value is computed per-week (never summed across the selected weeks),
 // per Colin's requirement that tables/charts show values per week.
-function buildWeekGroupMatrix(rows, groupField, weeks, markets) {
+// opts.getBoxes(groupKey, week) — optional override for the box denominator so
+// carrier views can use each carrier's own market boxes rather than the combined total.
+function buildWeekGroupMatrix(rows, groupField, weeks, markets, opts) {
+  const getBoxes = opts && opts.getBoxes;
   const groupKeys = Array.from(new Set(rows.map(r => r[groupField]).filter(Boolean)));
-  const boxesByWeek = {};
-  weeks.forEach(w => { boxesByWeek[w] = DataStore.boxCount(markets, [w]); });
+  const defaultBoxesByWeek = {};
+  weeks.forEach(w => { defaultBoxesByWeek[w] = DataStore.boxCount(markets, [w]); });
 
   const matrix = {};
   groupKeys.forEach(k => {
@@ -308,7 +311,7 @@ function buildWeekGroupMatrix(rows, groupField, weeks, markets) {
       const wRows = rows.filter(r => r.week === w && r[groupField] === k);
       const errorCount = wRows.length;
       const compensationTotal = wRows.reduce((s, r) => s + r.compensation, 0);
-      const boxes = boxesByWeek[w];
+      const boxes = getBoxes ? getBoxes(k, w) : defaultBoxesByWeek[w];
       matrix[k][w] = {
         errorCount,
         compensationTotal,
@@ -318,6 +321,26 @@ function buildWeekGroupMatrix(rows, groupField, weeks, markets) {
     });
   });
   return matrix;
+}
+
+// Maps each carrier to the FA-market codes it covers, derived from ALL logistics
+// rows so the denominator is stable regardless of the current error filter.
+// Intersected with effectiveMarkets so selecting SE only limits PostNord's boxes
+// to SE, while FA-EU gives PostNord its full SE+DK box count.
+function buildCarrierMarketMap(allLogisticsRows, effectiveMarkets) {
+  const coverageByCarrier = {};
+  allLogisticsRows.forEach(r => {
+    if (!r.carrier || !r.country) return;
+    if (!coverageByCarrier[r.carrier]) coverageByCarrier[r.carrier] = new Set();
+    coverageByCarrier[r.carrier].add(r.country);
+  });
+  const result = {};
+  Object.entries(coverageByCarrier).forEach(([carrier, fcSet]) => {
+    const faMarkets = ALL_MARKETS.filter(fa => fcSet.has(FA_TO_FC[fa]));
+    const intersected = faMarkets.filter(fa => effectiveMarkets.includes(fa));
+    result[carrier] = intersected.length > 0 ? intersected : effectiveMarkets;
+  });
+  return result;
 }
 
 // Orders group keys by total error volume across the given weeks — used only

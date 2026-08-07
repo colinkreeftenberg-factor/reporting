@@ -588,7 +588,8 @@ function PageLogistics(container, fs) {
   const allRows = DataStore.logisticsRows;
   let compensationMode = 'total'; // 'total' | 'perbox' | 'pererror'
   let statusMode = 'pct'; // 'pct' | 'absolute'
-  let issueMode = 'pct'; // 'pct' | 'absolute' — shared by the issue-type chart, table, and per-carrier cards
+  let issueMode = 'pct'; // 'pct' | 'absolute' — shared by the issue-type chart and main subcategory table
+  let carrierBreakdownMode = 'pct'; // 'pct' | 'absolute' | 'costperbox' — the per-carrier breakdown cards
   let subcategoryView = 'normal'; // 'normal' | 'carrier' — only used at the top subcategory level
 
   function render() { preserveScroll(renderInner); }
@@ -624,6 +625,11 @@ function PageLogistics(container, fs) {
     const markets = fs.effectiveMarkets();
     const agg = aggregate(filtered, weeks, markets);
     const target = logisticsTarget(markets, weeks);
+
+    // Each carrier's errorPct uses its own market box count as denominator —
+    // PostNord (SE+DK) divided by SE+DK boxes, not all-EU boxes.
+    const carrierMarketMap = buildCarrierMarketMap(DataStore.logisticsRows, markets);
+    const carrierGetBoxes = (carrier, w) => DataStore.boxCount(carrierMarketMap[carrier] || markets, [w]);
 
     container.appendChild(kpiRowFor(agg));
 
@@ -686,7 +692,7 @@ function PageLogistics(container, fs) {
           cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? issueMatrix[subKey][w].errorPct : issueMatrix[subKey][w].errorCount; return acc; }, {}),
         });
         const subRows = rowsForLevel.filter(r => r.error_subcategory === subKey);
-        const carrierSubMatrix = buildWeekGroupMatrix(subRows, 'carrier', weeks, markets);
+        const carrierSubMatrix = buildWeekGroupMatrix(subRows, 'carrier', weeks, markets, { getBoxes: carrierGetBoxes });
         const carrierSubKeys = orderGroupsByImpact(carrierSubMatrix, weeks);
         carrierSubKeys.forEach(ck => {
           table1Rows.push({
@@ -727,7 +733,7 @@ function PageLogistics(container, fs) {
     container.appendChild(table1Card);
 
     // ---- Section 3: Error % per carrier per week (line chart) ----
-    const carrierMatrix = buildWeekGroupMatrix(filtered, 'carrier', weeks, markets);
+    const carrierMatrix = buildWeekGroupMatrix(filtered, 'carrier', weeks, markets, { getBoxes: carrierGetBoxes });
     const carrierKeys = orderGroupsByImpact(carrierMatrix, weeks);
     const carrierSeries = carrierKeys.map(k => ({ label: k, dataByWeek: Object.fromEntries(weeks.map(w => [w, carrierMatrix[k][w].errorPct])) }));
 
@@ -746,14 +752,23 @@ function PageLogistics(container, fs) {
       } : undefined,
     });
 
-    // ---- Section 4: per-carrier breakdown cards, same drill level and toggle as above ----
+    // ---- Section 4: per-carrier breakdown cards, separate mode toggle ----
     const carrierGroup = el('div', { class: 'carrier-group' }, [
-      el('div', { class: 'carrier-group-title' }, [`${levelLabel} Breakdown per Carrier`]),
+      el('div', { style: 'display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:4px;' }, [
+        el('div', { class: 'carrier-group-title', style: 'margin-bottom:0;' }, [`${levelLabel} Breakdown per Carrier`]),
+        el('div', { class: 'toggle-pill' }, [
+          el('button', { class: carrierBreakdownMode === 'pct' ? 'active' : '', onclick: () => { carrierBreakdownMode = 'pct'; render(); } }, ['Error %']),
+          el('button', { class: carrierBreakdownMode === 'absolute' ? 'active' : '', onclick: () => { carrierBreakdownMode = 'absolute'; render(); } }, ['Absolute']),
+          el('button', { class: carrierBreakdownMode === 'costperbox' ? 'active' : '', onclick: () => { carrierBreakdownMode = 'costperbox'; render(); } }, ['Cost/Box']),
+        ]),
+      ]),
     ]);
     carrierKeys.forEach(carrier => {
       const carrierAllRows = filtered.filter(r => r.carrier === carrier);
       const carrierDrillRows = withBlankGroupLabel(applyGenericDrillFilter(carrierAllRows, fs.drillPath), level);
-      const cMatrix = buildWeekGroupMatrix(carrierDrillRows, level, weeks, markets);
+      // Use this carrier's own market boxes as denominator for the subcategory breakdown.
+      const cGetBoxes = (groupKey, w) => DataStore.boxCount(carrierMarketMap[carrier] || markets, [w]);
+      const cMatrix = buildWeekGroupMatrix(carrierDrillRows, level, weeks, markets, { getBoxes: cGetBoxes });
       const cKeys = orderGroupsByImpact(cMatrix, weeks);
       const carrierErrorCount = carrierAllRows.length;
       const carrierComp = carrierAllRows.reduce((s, r) => s + r.compensation, 0);
@@ -767,14 +782,40 @@ function PageLogistics(container, fs) {
       card.appendChild(PivotTable({
         rowLabel: levelLabel,
         weeks,
-        rows: cKeys.map(k => ({ key: k, cells: weeks.reduce((acc, w) => { acc[w] = issueMode === 'pct' ? cMatrix[k][w].errorPct : cMatrix[k][w].errorCount; return acc; }, {}) })),
-        cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v), cls: '' } : { display: fmtPct(v), cls: '' },
+        rows: cKeys.map(k => ({
+          key: k,
+          cells: weeks.reduce((acc, w) => {
+            const c = cMatrix[k][w];
+            acc[w] = carrierBreakdownMode === 'absolute' ? c.errorCount : carrierBreakdownMode === 'costperbox' ? c.compPerBox : c.errorPct;
+            return acc;
+          }, {}),
+        })),
+        cellFormatter: (v) => {
+          if (carrierBreakdownMode === 'absolute') return { display: fmtInt(v), cls: '' };
+          if (carrierBreakdownMode === 'costperbox') return { display: fmtEurPrecise(v), cls: '' };
+          return { display: fmtPct(v), cls: '' };
+        },
         onRowClick: canDrillFurther ? (key) => { fs.pushDrill(level, key); render(); } : null,
         commentsFor: cHooks.commentsFor,
         onCellClick: cHooks.onCellClick,
         totalsRow: {
-          cells: weeks.reduce((acc, w) => { acc[w] = cKeys.reduce((s, k) => s + (issueMode === 'pct' ? cMatrix[k][w].errorPct : cMatrix[k][w].errorCount), 0); return acc; }, {}),
-          cellFormatter: (v) => issueMode === 'absolute' ? { display: fmtInt(v) } : { display: fmtPct(v) },
+          cells: weeks.reduce((acc, w) => {
+            if (carrierBreakdownMode === 'costperbox') {
+              const totalComp = cKeys.reduce((s, k) => s + cMatrix[k][w].compensationTotal, 0);
+              const carrierBoxes = DataStore.boxCount(carrierMarketMap[carrier] || markets, [w]);
+              acc[w] = carrierBoxes > 0 ? totalComp / carrierBoxes : 0;
+            } else if (carrierBreakdownMode === 'absolute') {
+              acc[w] = cKeys.reduce((s, k) => s + cMatrix[k][w].errorCount, 0);
+            } else {
+              acc[w] = cKeys.reduce((s, k) => s + cMatrix[k][w].errorPct, 0);
+            }
+            return acc;
+          }, {}),
+          cellFormatter: (v) => {
+            if (carrierBreakdownMode === 'absolute') return { display: fmtInt(v) };
+            if (carrierBreakdownMode === 'costperbox') return { display: fmtEurPrecise(v) };
+            return { display: fmtPct(v) };
+          },
         },
       }));
       carrierGroup.appendChild(card);
